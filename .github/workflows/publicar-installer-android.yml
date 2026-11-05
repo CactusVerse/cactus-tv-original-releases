@@ -1,0 +1,88 @@
+name: Publicar Cactus TV Installer Android beta
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android-installer/**'
+      - '.github/workflows/publicar-installer-android.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Obtener Apps2Samsung v3.1.0 MIT
+        run: git clone --depth 1 --branch v3.1.0 https://github.com/Apps2Samsung/Apps2Samsung.git android-installer/upstream
+
+      - name: Aplicar identidad Cactus TV
+        run: python3 android-installer/patch.py android-installer/upstream
+
+      - name: Preparar .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Preparar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar MAUI Android
+        run: dotnet workload install maui-android
+
+      - name: Firmar exclusivamente la beta
+        shell: bash
+        run: |
+          keytool -genkeypair -v -storetype PKCS12 \
+            -keystore "$PWD/cactus-beta-temp.p12" -alias cactus \
+            -storepass 'prueba-cactus-2026' -keypass 'prueba-cactus-2026' \
+            -keyalg RSA -keysize 3072 -validity 365 \
+            -dname 'CN=Cactus TV Installer BETA,O=CactusVerse,C=PE' -noprompt
+
+      - name: Compilar APK Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet publish android-installer/upstream/Apps2Samsung.Mobile/Apps2Samsung.Mobile.csproj \
+            -c Release -f net10.0-android \
+            -p:ApplicationDisplayVersion=0.1.0 \
+            -p:ApplicationVersion=1 \
+            -p:AndroidPackageFormat=apk \
+            -p:AndroidKeyStore=true \
+            -p:AndroidSigningKeyStore="$PWD/cactus-beta-temp.p12" \
+            -p:AndroidSigningKeyAlias=cactus \
+            -p:AndroidSigningStorePass=prueba-cactus-2026 \
+            -p:AndroidSigningKeyPass=prueba-cactus-2026 \
+            -o "$PWD/output"
+          mkdir -p dist
+          apk="$(find output -name '*Signed.apk' | head -n 1)"
+          test -n "$apk" || { echo 'APK firmado no producido'; exit 1; }
+          cp "$apk" dist/CactusTV-Installer-Android-v0.1.0-beta.apk
+          sha256sum dist/*.apk > dist/SHA256SUMS-Android.txt
+
+      - name: Publicar APK en GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: cactus-installer-android-v0.1.0-beta
+          name: 'Cactus TV Installer Android v0.1.0 — Beta'
+          prerelease: true
+          draft: false
+          files: |
+            dist/CactusTV-Installer-Android-v0.1.0-beta.apk
+            dist/SHA256SUMS-Android.txt
+          fail_on_unmatched_files: true
+          body: |
+            ## Cactus TV Installer Android — beta de prueba
+            Instala archivos WGT/Tizen desde un celular Android hacia un televisor Samsung compatible usando la misma red Wi-Fi, modo desarrollador y certificados.
+
+            **Esta herramienta NO incluye paquetes WGT, catálogos multimedia ni contenidos.** El usuario selecciona su archivo WGT autorizado.
+
+            **Versión BETA.** Probada su compilación, no se asegura compatibilidad con todos los televisores. Si ya instalaste una beta anterior desde otro paquete, quizá debas desinstalarla porque la firma de esta prueba es distinta. No uses esta versión para una distribución masiva sin configurar una firma permanente para futuras actualizaciones.
+
+            Basado en [Apps2Samsung v3.1.0](https://github.com/Apps2Samsung/Apps2Samsung) (© 2025 Patrick Stel), bajo licencia MIT. Conservar avisos de licencia y atribución.
