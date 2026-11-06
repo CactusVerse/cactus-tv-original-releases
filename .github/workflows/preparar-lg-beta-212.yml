@@ -1,0 +1,29 @@
+name: Preparar beta LG 2.0.12
+on:
+  push:
+    paths:
+      - ".github/workflows/preparar-lg-beta-212.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  preparar-lanzamiento:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear lanzamiento borrador para adjuntar el IPK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-2.0.12-r9-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "El lanzamiento ya existe."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --latest=false \
+            --title "Cactus TV LG webOS 2.0.12 R9 (beta)" \
+            --notes "Beta LG webOS 4.4 / ARMv7 con catalogo Anime unificado, interfaz Desierto y mejoras de reproduccion. Aun requiere confirmacion en un televisor real.\\n\\nAdjuntar exactamente: CactusTV_LG_Beta_2.0.12_R9_Anime_Unificado.ipk (21,930,476 bytes)\\nSHA-256 esperado: 20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd\\n\\nNo publicar hasta comprobar el SHA-256 del archivo adjuntado. Para instalar: Developer Mode activado y webOS Dev Manager."
