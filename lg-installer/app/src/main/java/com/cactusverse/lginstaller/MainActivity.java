@@ -2,6 +2,10 @@ package com.cactusverse.lginstaller;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.view.inputmethod.InputMethodManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -30,6 +34,8 @@ public class MainActivity extends Activity {
                     accent=Color.rgb(222,171,116);
   private EditText hostInput,passInput;
   private TextView status,fileName;
+  private String lastDiagnostic="Aún no se han ejecutado pruebas.";
+  private Button testButton;
   private Button pairButton,pickButton,installButton;
   private Uri file;
   private String selectedName="";
@@ -75,7 +81,7 @@ public class MainActivity extends Activity {
     LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
     root.setPadding(dp(18),dp(20),dp(18),dp(28));scroll.addView(root);
     add(root,label("🌵  CACTUS TV",27,accent),0);
-    add(root,label("INSTALLER LG webOS · BETA 0.1.1",12,muted),8);
+    add(root,label("INSTALLER LG webOS · BETA 0.1.3 · SELECTOR IPK",12,muted),8);
     add(root,label("Instala archivos .ipk desde tu celular Android en un LG con Developer Mode. Sin PC y sin root.",15,ink),12);
     LinearLayout step1=card(root);
     add(step1,label("01  PREPARA EL TELEVISOR",16,accent),5);
@@ -93,11 +99,28 @@ public class MainActivity extends Activity {
     passInput.setHint("Passphrase del LG (6 caracteres)");
     passInput.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
     add(step2,passInput,7);
-    pairButton=button("Conectar / emparejar LG");add(step2,pairButton,4);
-    pairButton.setOnClickListener(v->pair());
-    status=label("Pulsa Conectar para comprobar la comunicación con tu LG.",14,ink);
-    status.setMinHeight(dp(58));
+    testButton=button("1 · Probar la conexión de red");
+    add(step2,testButton,4);
+    testButton.setOnClickListener(v->{
+      feedback("Botón de diagnóstico pulsado");
+      testNetwork();
+    });
+    pairButton=button("2 · Conectar / emparejar LG");
+    add(step2,pairButton,5);
+    pairButton.setOnClickListener(v->{
+      feedback("Botón de emparejamiento pulsado");
+      pair();
+    });
+    status=label("Diagnóstico: toca Probar la conexión de red. No necesitas la passphrase para esta prueba.",15,ink);
+    status.setMinHeight(dp(94));
     add(step2,status,8);
+    Button copy=button("Copiar diagnóstico (sin claves)");
+    add(step2,copy,4);
+    copy.setOnClickListener(v->{
+      ClipboardManager cb=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+      cb.setPrimaryClip(ClipData.newPlainText("Cactus LG diagnostico",lastDiagnostic));
+      Toast.makeText(this,"Diagnóstico copiado",Toast.LENGTH_SHORT).show();
+    });
     Button forget=button("Olvidar confianza SSH");add(step2,forget,0);
     forget.setOnClickListener(v->forgetHost());
     LinearLayout step3=card(root);
@@ -105,22 +128,65 @@ public class MainActivity extends Activity {
     add(step3,label("Selecciona un .ipk autorizado guardado en el celular. No se descargan apps ni paquetes automáticamente.",13,muted),6);
     pickButton=button("Seleccionar archivo .ipk");add(step3,pickButton,5);
     pickButton.setOnClickListener(v->pickFile());
-    fileName=label("No has seleccionado un archivo",13,ink);add(step3,fileName,7);
+    Button alternatePicker=button("Otro explorador (si no funciona)");
+    add(step3,alternatePicker,5);
+    alternatePicker.setOnClickListener(v->pickFileAlternative());
+    fileName=label("Ningún archivo seleccionado. Tras elegir el IPK, aquí aparecerá su nombre o un error.",14,ink);
+    fileName.setMinHeight(dp(68));
+    add(step3,fileName,7);
     installButton=button("Instalar en LG");installButton.setEnabled(false);
     add(step3,installButton,3);installButton.setOnClickListener(v->install());
     add(root,label("Proyecto experimental independiente. LG webOS Developer Mode puede caducar. La passphrase no se guarda.",11,muted),0);
     setContentView(scroll);
   }
   private void say(String s){main.post(()->{
+    lastDiagnostic="Cactus TV Installer LG v0.1.2\n"+s;
     status.setText(s);
-    boolean error=s.startsWith("No se")||s.startsWith("Error")||s.contains("no responde")||s.contains("inválida");
+    boolean error=s.startsWith("No se")||s.startsWith("Error")||
+                  s.contains("no responde")||s.contains("inválida")||
+                  s.contains("cerrado")||s.contains("rechazada");
     status.setTextColor(error?Color.rgb(255,169,151):ink);
   });}
+  private void feedback(String message){
+    ((InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE))
+      .hideSoftInputFromWindow(hostInput.getWindowToken(),0);
+    hostInput.clearFocus();passInput.clearFocus();
+    say(message+"... comprobando.");
+    Toast.makeText(this,message,Toast.LENGTH_SHORT).show();
+  }
+  private boolean tcpReachable(String host,int port,int timeout){
+    try(Socket socket=new Socket()){
+      socket.connect(new InetSocketAddress(host,port),timeout);
+      return true;
+    }catch(IOException e){return false;}
+  }
+  private void testNetwork(){
+    final String ip;
+    try {ip=host();}catch(Exception e){
+      say("IP inválida: "+e.getMessage()+"\nRevisa la dirección que aparece AHORA en el LG.");
+      return;
+    }
+    launch(()->{
+      say("Probando "+ip+" en puertos LG 9991 y 9922...");
+      boolean server=tcpReachable(ip,9991,2200);
+      say("Key Server (9991): "+(server?"RESPONDE":"SIN RESPUESTA")+
+          "\nComprobando SSH (9922)...");
+      boolean ssh=tcpReachable(ip,9922,2200);
+      String report="IP: "+ip+"\nKey Server 9991: "+(server?"ABIERTO":"NO ACCESIBLE")+
+        "\nSSH webOS 9922: "+(ssh?"ABIERTO":"NO ACCESIBLE");
+      if(server&&ssh){
+        report+="\nLa conexión de red está lista. Ahora escribe la passphrase del LG y pulsa Emparejar.";
+      } else {
+        report+="\nVerifica la IP actual en Developer Mode, Key Server ON y que el celular y TV estén en la misma Wi-Fi. Si ambos fallan, comprueba si introdujiste la IP del celular en lugar de la del LG.";
+      }
+      say(report);
+    });
+  }
   private void working(boolean w){
     busy=w;
     main.post(()->{
-      pairButton.setText(w?"Conectando con LG...":"Conectar / emparejar LG");
-      pairButton.setEnabled(!w);pickButton.setEnabled(!w);
+      pairButton.setText(w?"Conectando con LG...":"2 · Conectar / emparejar LG");
+      pairButton.setEnabled(!w);testButton.setEnabled(!w);pickButton.setEnabled(!w);
       hostInput.setEnabled(!w);passInput.setEnabled(!w);
       installButton.setEnabled(!w&&file!=null&&currentKey!=null);
     });
@@ -128,7 +194,15 @@ public class MainActivity extends Activity {
   private void launch(Runnable task){
     if(busy)return;
     working(true);
-    background.submit(()->{try{task.run();}finally{working(false);}});
+    background.submit(()->{
+      try {task.run();}
+      catch(Throwable unexpected) {
+        String msg=unexpected.getMessage();
+        say("Error interno de la app: "+unexpected.getClass().getSimpleName()+
+           (msg==null?"":" ("+msg+")")+". Copia el diagnóstico.");
+      }
+      finally {working(false);}
+    });
   }
   private String host() throws Exception {
     String h=hostInput.getText().toString().trim();
@@ -221,6 +295,15 @@ public class MainActivity extends Activity {
     Session session=ssh.getSession("prisoner",h,9922);
     session.setConfig("StrictHostKeyChecking","yes");
     session.setConfig("PreferredAuthentications","publickey");
+    // webOS antiguos (p.ej. webOS 4.x) pueden anunciar solamente ssh-rsa
+    // para la identidad del servidor y la autenticacion de llave publica.
+    // Agregar RSA/SHA-1 AL FINAL, de modo que sigan prefiriendose algoritmos
+    // modernos y su uso quede limitado a esta conexion local del LG.
+    // Se mantiene la comprobacion estricta y huella SSH almacenada.
+    session.setConfig("server_host_key",
+        session.getConfig("server_host_key")+",ssh-rsa");
+    session.setConfig("PubkeyAcceptedAlgorithms",
+        session.getConfig("PubkeyAcceptedAlgorithms")+",ssh-rsa");
     session.setServerAliveInterval(12000);
     session.connect(14000);
     return session;
@@ -232,14 +315,24 @@ public class MainActivity extends Activity {
   }
   private void pair(){
     final String h,p;
-    try{h=host();p=pass();}catch(Exception e){say(e.getMessage());return;}
-    say("Iniciando conexión con "+h+"... Comprueba que sea la IP actual de tu LG.");
+    try{h=host();p=pass();}catch(Exception e){
+      say("No se puede iniciar el emparejamiento: "+e.getMessage());
+      return;
+    }
+    say("Botón responde correctamente. Probando conexión a "+h+"...");
     launch(()->{
       Session s=null;
       try {
-        say("Descargando clave SSH del Key Server del LG...");
+        say("Paso 1/3: verificando puertos del LG ("+h+")...");
+        boolean server=tcpReachable(h,9991,3500);
+        boolean sshPort=tcpReachable(h,9922,3500);
+        if(!server||!sshPort)
+          throw new IOException("Key Server 9991: "+(server?"OK":"SIN RESPUESTA")+
+              "; SSH 9922: "+(sshPort?"OK":"SIN RESPUESTA")+
+              ". Revisa IP actual, modo desarrollador y misma red.");
+        say("Paso 2/3: descargando clave SSH de LG...");
         byte[] key=keyFromTv(h);
-        say("Verificando identidad y conectando por SSH...");
+        say("Paso 3/3: autenticando SSH. Si aparece una huella, revisa y confirma.");
         s=connect(h,key,p);
         currentKey=key;
         prefs.edit().putString("last_ip",h).apply();
@@ -263,30 +356,134 @@ public class MainActivity extends Activity {
         working(false);
       }).setNegativeButton("Cancelar",null).show();
   }
-  private void pickFile(){
-    Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT);
-    picker.addCategory(Intent.CATEGORY_OPENABLE);
-    picker.setType("*/*");
-    startActivityForResult(picker,2001);
+  // Selector compatible con proveedores DocumentsUI, Descargas, Drive y
+  // administradores que no devuelven DISPLAY_NAME en el primer query.
+  private void fileFeedback(String message,boolean error){
+    main.post(()->{
+      fileName.setText(message);
+      fileName.setTextColor(error?Color.rgb(255,169,151):ink);
+      if(error)Toast.makeText(MainActivity.this,message,Toast.LENGTH_LONG).show();
+    });
   }
+
+  private void pickFile(){
+    if(busy)return;
+    file=null;
+    if(installButton!=null)installButton.setEnabled(false);
+    fileFeedback("Abriendo el selector de archivos... Elige un paquete .ipk.",false);
+    try {
+      Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+      picker.addCategory(Intent.CATEGORY_OPENABLE);
+      picker.setType("*/*");
+      picker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+      startActivityForResult(picker,2001);
+    }catch(Exception e){
+      fileFeedback("Error al abrir el selector: "+e.getMessage()+". Prueba Otro explorador.",true);
+    }
+  }
+  private void pickFileAlternative(){
+    if(busy)return;
+    file=null;
+    if(installButton!=null)installButton.setEnabled(false);
+    fileFeedback("Abriendo otro explorador de archivos...",false);
+    try{
+      Intent other=new Intent(Intent.ACTION_GET_CONTENT);
+      other.addCategory(Intent.CATEGORY_OPENABLE);
+      other.setType("*/*");
+      other.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      startActivityForResult(Intent.createChooser(other,"Selecciona un archivo IPK"),2001);
+    }catch(Exception e){fileFeedback("No se pudo abrir el explorador: "+e.getMessage(),true);}
+  }
+
   @Override protected void onActivityResult(int request,int result,Intent data){
     super.onActivityResult(request,result,data);
-    if(request!=2001||result!=RESULT_OK||data==null||data.getData()==null)return;
-    Uri uri=data.getData();String name="";long bytes=-1;
-    try(Cursor c=getContentResolver().query(uri,null,null,null,null)){
-      if(c!=null&&c.moveToFirst()){
-        int i=c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-        int j=c.getColumnIndex(OpenableColumns.SIZE);
-        if(i>=0)name=c.getString(i);
-        if(j>=0&&!c.isNull(j))bytes=c.getLong(j);
-      }
-    }catch(Exception ignored){}
-    if(name==null||!name.toLowerCase(Locale.ROOT).endsWith(".ipk")||bytes>300L*1024*1024){
-      say("Selecciona un archivo .ipk de menos de 300 MB.");return;
+    if(request!=2001)return;
+    if(result!=RESULT_OK){
+      fileFeedback(file==null?"Selección cancelada. Pulsa Seleccionar archivo .ipk para intentarlo de nuevo.":
+        "Selección cancelada. Se mantiene el archivo anterior.",false);
+      return;
     }
-    file=uri;selectedName=name;selectedBytes=bytes;
-    fileName.setText(name+(bytes>=0?" · "+(bytes/(1024*1024))+" MB":""));
-    installButton.setEnabled(currentKey!=null);
+    Uri selectedUri=data==null?null:data.getData();
+    if(selectedUri==null&&data!=null&&data.getClipData()!=null&&data.getClipData().getItemCount()>0){
+      selectedUri=data.getClipData().getItemAt(0).getUri();
+    }
+    if(selectedUri==null){
+      fileFeedback("El explorador no devolvió un archivo. Pulsa Otro explorador para probar una alternativa.",true);
+      return;
+    }
+    final Uri selected=selectedUri;
+    try {
+      getContentResolver().takePersistableUriPermission(selected,Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    }catch(Exception notPersistable){
+      // Algunos administradores ofrecen solo permisos temporales; aún sirven para esta sesión.
+    }
+    fileFeedback("Archivo recibido. Leyendo los datos del IPK...",false);
+    launch(()->{
+      try {
+        String name=null;
+        long bytes=-1L;
+        try(Cursor cursor=getContentResolver().query(selected,
+            new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){
+          if(cursor!=null&&cursor.moveToFirst()){
+            int n=cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+            int z=cursor.getColumnIndex(OpenableColumns.SIZE);
+            if(n>=0&&!cursor.isNull(n))name=cursor.getString(n);
+            if(z>=0&&!cursor.isNull(z))bytes=cursor.getLong(z);
+          }
+        }catch(Exception providerError){
+          // Fallbacks for document providers that reject column projections.
+        }
+        if(name==null||name.trim().isEmpty()) {
+          String last=selected.getLastPathSegment();
+          if(last!=null){
+            int slash=last.lastIndexOf('/');
+            name=(slash>=0?last.substring(slash+1):last);
+            if(name.startsWith("raw:"))name=name.substring(4);
+          }
+        }
+        if(name==null)name="";
+        name=name.trim();
+
+        // Es posible que un administrador de archivos entregue la URI sin extensión,
+        // pero un IPK webOS normal comienza con la cabecera de paquete ar.
+        boolean arIpk=false;
+        try(InputStream test=getContentResolver().openInputStream(selected)){
+          if(test==null)throw new IOException("El proveedor no pudo abrir el archivo.");
+          byte[] head=new byte[8];
+          int pos=0;
+          while(pos<8){
+            int read=test.read(head,pos,8-pos);
+            if(read<0)break;
+            pos+=read;
+          }
+          arIpk=pos==8&&"!<arch>\n".equals(new String(head,StandardCharsets.US_ASCII));
+        }
+        if(bytes>300L*1024*1024)
+          throw new IOException("Archivo demasiado grande (máximo 300 MB).");
+        boolean ipkName=name.toLowerCase(Locale.ROOT).endsWith(".ipk");
+        if(!ipkName&&!arIpk)
+          throw new IOException("El archivo no parece un IPK. Nombre recibido: "+
+            (name.isEmpty()?"desconocido":name)+". Usa el archivo .ipk original, sin descomprimir.");
+        if(!arIpk)
+          throw new IOException("El archivo no tiene cabecera IPK (ar). Puede estar dañado o no ser un IPK de webOS.");
+        if(name.isEmpty()||!ipkName)name="paquete-lg.ipk";
+        if(bytes==0)throw new IOException("El archivo seleccionado está vacío.");
+
+        final String display=name;
+        final long size=bytes;
+        main.post(()->{
+          file=selected;selectedName=display;selectedBytes=size;
+          fileName.setText("✓ IPK listo: "+display+(size>=0?" ("+String.format(Locale.ROOT,"%.1f MB",(double)size/(1024*1024))+")":"")+
+            "\nPulsa Instalar en LG para continuar.");
+          fileName.setTextColor(Color.rgb(168,224,178));
+          installButton.setEnabled(!busy&&currentKey!=null);
+          Toast.makeText(MainActivity.this,"IPK seleccionado",Toast.LENGTH_SHORT).show();
+        });
+      }catch(Exception ex){
+        String reason=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();
+        fileFeedback("No se pudo seleccionar el IPK: "+reason,true);
+      }
+    });
   }
   private String exec(Session s,String command,long maxMs,boolean requireInstall) throws Exception {
     ChannelExec c=(ChannelExec)s.openChannel("exec");
