@@ -1,0 +1,58 @@
+name: Construir beta LG webOS 3 LH6000
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-webos3-lh6000.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilacion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar IPK verificado de LG 2.0.12
+        run: |
+          curl -fL --retry 3 --retry-delay 2 \
+            https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk \
+            -o origen.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  origen.ipk" | sha256sum -c -
+      - name: Construir paquete webOS3
+        run: |
+          python3 scripts/build-lg-webos3-lh6000-compat.py
+          dpkg-deb --info CactusTV_LG_2.0.13_webOS3_LH6000_DIAG.ipk
+          sha256sum CactusTV_LG_2.0.13_webOS3_LH6000_DIAG.ipk > SHA256SUMS-webOS3.txt
+      - name: Comprobar código JavaScript del puente
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,subprocess
+          raw=pathlib.Path("CactusTV_LG_2.0.13_webOS3_LH6000_DIAG.ipk").read_bytes()
+          pos=8
+          while pos<len(raw):
+              h=raw[pos:pos+60];sz=int(h[48:58]);n=h[:16].decode().strip().rstrip('/')
+              b=raw[pos+60:pos+60+sz];pos+=60+sz+sz%2
+              if n=="data.tar.gz":
+                  with tarfile.open(fileobj=io.BytesIO(b),mode="r:gz") as t:
+                      for f in t:
+                          if f.isfile() and (f.name.endswith("launcher.js") or f.name.endswith("webos-child.js") or f.name.endswith("webos3-preflight.js")):
+                              source=t.extractfile(f).read().decode()
+                              subprocess.run(["node","--check","-"],input=source,text=True,check=True)
+                              print("OK",f.name)
+          PY
+      - name: Publicar release experimental
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-webos3-lh6000-2.0.13-diagnostico"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_2.0.13_webOS3_LH6000_DIAG.ipk SHA256SUMS-webOS3.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" CactusTV_LG_2.0.13_webOS3_LH6000_DIAG.ipk SHA256SUMS-webOS3.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG 2.0.13 R9 — webOS 3.0 LH6000 diagnóstico" \
+              --notes "Beta EXCLUSIVA de prueba LG webOS 3.0/Chromium 38 (LH6000). Corrige URLSearchParams no soportado en webos-child.js y carga el iframe de la app sin display:none, añadiendo diagnóstico de errores JavaScript al inicio. No modifica el servidor de reproducción ni el catálogo respecto a 2.0.12. Sin pruebas aún en LH6000 real: puede requerir más ajustes. NO reemplaza el release oficial webOS4 de la web." \
+              --prerelease \
+              --latest=false
+          fi
