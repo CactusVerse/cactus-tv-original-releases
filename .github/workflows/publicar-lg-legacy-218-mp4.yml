@@ -1,0 +1,78 @@
+name: Publicar LG Legacy HD 2.0.18 - prueba MP4 progresivo
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-legacy-218-mp4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar-y-verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar IPK 2.0.17 comprobado
+        run: |
+          curl -fL --retry 4 --retry-delay 3 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-legacy-hd-2.0.17-crypto-compat/CactusTV_LG_Legacy_HD_2.0.17_Crypto_Compat.ipk" -o base.ipk
+          echo "cb569d616c694be475bae66e4dabc8238f73c2ea21297db8fc06d9c349268c76  base.ipk" | sha256sum -c -
+      - name: Extraer prueba local y convertir contenedor
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib
+          b=pathlib.Path('base.ipk').read_bytes()
+          pos=8
+          while pos<len(b):
+              h=b[pos:pos+60];n=h[:16].decode().strip().rstrip('/')
+              sz=int(h[48:58]);data=b[pos+60:pos+60+sz];pos+=60+sz+sz%2
+              if n=='data.tar.gz':break
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as t:
+              member=next(x for x in t if x.name.endswith('/app/cactus-demo.mp4'))
+              media=t.extractfile(member).read()
+          pathlib.Path('cactus-demo-original.mp4').write_bytes(media)
+          assert b'moof' in media
+          PY
+          ffmpeg -hide_banner -loglevel error -y -i cactus-demo-original.mp4 -map 0:v:0 -c:v copy -movflags +faststart cactus-demo-progressive.mp4
+          ffprobe -v error -show_entries format=duration,size:stream=codec_name,profile,width,height,level -of json cactus-demo-progressive.mp4
+      - name: Empaquetar versión 2.0.18 con prueba local
+        run: |
+          python3 scripts/build-lg-legacy-218-mp4-compat.py
+          dpkg-deb --info CactusTV_LG_Legacy_HD_2.0.18_MP4_Compat.ipk
+          sha256sum CactusTV_LG_Legacy_HD_2.0.18_MP4_Compat.ipk > SHA256SUMS-LG-Legacy-MP4-218.txt
+      - name: Verificar equivalencia de video y cambios mínimos
+        run: |
+          python3 - <<'PY'
+          import pathlib,io,tarfile,json,subprocess
+          def files(path):
+              b=pathlib.Path(path).read_bytes();pos=8
+              while pos<len(b):
+                  h=b[pos:pos+60];size=int(h[48:58]);n=h[:16].decode().strip().rstrip('/')
+                  data=b[pos+60:pos+60+size];pos+=60+size+size%2
+                  if n=='data.tar.gz':break
+              with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as t:
+                  return {m.name:t.extractfile(m).read() for m in t if m.isfile()}
+          old=files('base.ipk');new=files('CactusTV_LG_Legacy_HD_2.0.18_MP4_Compat.ipk')
+          assert old.keys()==new.keys()
+          changed=sorted(n.rsplit('/',1)[-1] for n in old if old[n]!=new[n])
+          assert changed==['appinfo.json','cactus-demo.mp4','playback-controls.js','services.json'],changed
+          video=next(new[n] for n in new if n.endswith('/app/cactus-demo.mp4'))
+          assert b'moov' in video and b'mdat' in video and b'moof' not in video
+          meta=json.loads(next(new[n] for n in new if n.endswith('/appinfo.json')))
+          assert meta['resolution']=='1280x720' and meta['version']=='2.0.18'
+          player=next(new[n] for n in new if n.endswith('/app/playback-controls.js'))
+          subprocess.run(['node','--check','-'],input=player,check=True)
+          print('Validación OK:',changed,'MP4 no fragmentado')
+          PY
+          ffmpeg -v error -i cactus-demo-progressive.mp4 -f null -
+      - name: Publicar beta separada sin tocar la web
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-legacy-hd-2.0.18-mp4-test"
+          gh release create "$TAG" CactusTV_LG_Legacy_HD_2.0.18_MP4_Compat.ipk SHA256SUMS-LG-Legacy-MP4-218.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Cactus TV LG Legacy HD 2.0.18 - prueba video local" \
+            --notes "Beta exclusiva de prueba para LG LH6000 con webOS 3: el clip propio cactus-demo.mp4 de 2.0.17 estaba fragmentado (moof), con H.264 video-only. Se ha convertido a MP4 convencional no fragmentado con moov inicial y el mismo stream H.264, sin recomprimir. Se añade el código de error HTML5 en el reproductor local si sigue fallando. Mantiene la resolución HD, menú y módulo de reproducción del 2.0.17; el error separado de MD5 del catálogo no queda resuelto aquí. NO sustituye la versión pública LG Legacy hasta verificar en televisor real." \
+            --prerelease --latest=false
