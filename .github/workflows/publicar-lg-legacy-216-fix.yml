@@ -53,7 +53,7 @@ jobs:
           const oldBrowser=lib('crypto-old.js',true);
           const fixed=lib('crypto-fixed.js',true);
           for(const word of ['hola','Cactus TV HD','Cactus TV español']){
-            assert.throws(()=>oldBrowser.wrap(word,'portal'),TypeError);
+            assert.throws(()=>oldBrowser.wrap(word,'portal'),e=>e&&e.name==='TypeError'&&/slice/.test(e.message));
             const encrypted=modern.wrap(word,'portal');
             assert.strictEqual(fixed.wrap(word,'portal'),encrypted);
             assert.strictEqual(fixed.unwrap(encrypted,'portal'),word);
