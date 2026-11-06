@@ -1,0 +1,59 @@
+name: Publicar paquetes Samsung R9
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-wgt-samsung-r9.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar instalador oficial
+        run: |
+          curl -fL --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/samsung-2026-11-05/CactusTV-Instalar.exe" \
+            -o CactusTV-Instalar.exe
+
+      - name: Extraer y verificar paquetes originales
+        run: |
+          python3 - <<'PY'
+          import hashlib, io, pathlib, zipfile
+          installer=pathlib.Path("CactusTV-Instalar.exe").read_bytes()
+          def sha(data): return hashlib.sha256(data).hexdigest()
+          assert sha(installer) == "239bb3e9fcccd70a8e54a6a9bfca7256c238421e79107b2a92ae49f6004b4f0a", "Instalador incorrecto"
+          end=installer.find(b"PK\x05\x06")
+          assert end > 0, "No se encontro ZIP incrustado"
+          archive=zipfile.ZipFile(io.BytesIO(installer[:end+22]))
+          assert archive.testzip() is None, "Archivo ZIP danado"
+          expected={
+            "Samsung/Cactus TV.wgt":("CactusTV_Samsung_R9.wgt","a9c13baf0dbc376b9e7564d9dbb6703d894518f69d23340a2d6e559a83aae22a"),
+            "Samsung-Legacy/Cactus TV Legacy.wgt":("CactusTV_Samsung_Legacy_R9.wgt","96d35769b34d07b7f18aa51706353f9a9fac6876abe635935a842fe9d9f3db3b")
+          }
+          dest=pathlib.Path("dist");dest.mkdir()
+          for entry,(name,digest) in expected.items():
+            content=archive.read(entry)
+            assert sha(content)==digest, "Paquete no coincide: "+name
+            with zipfile.ZipFile(io.BytesIO(content)) as wgt:
+              assert wgt.testzip() is None, "WGT corrupto: "+name
+            (dest/name).write_bytes(content)
+            print(name, len(content), digest)
+          PY
+
+      - name: Publicar los dos WGT en GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="samsung-wgt-r9-2026-11-05"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.wgt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/*.wgt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV Samsung R9 — WGT normal y Legacy" \
+              --notes "Paquetes originales de la beta 0.2.4 R9, extraidos del instalador CactusTV-Instalar.exe y verificados por SHA-256. Samsung normal declara Tizen 6.5+; Legacy declara Tizen 2.3+ (compatibilidad real variable). La version 1.4.10 es otra compilacion." \
+              --latest=false
+          fi
