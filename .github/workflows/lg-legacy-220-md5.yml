@@ -1,0 +1,87 @@
+name: LG Legacy HD 2.0.20 - MD5 Chrome38
+on:
+  push:
+    paths:
+      - ".github/workflows/lg-legacy-220-md5.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recuperar LG Legacy 2.0.19
+        run: |
+          curl -fL --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-legacy-hd-2.0.19-stream-es5/CactusTV_LG_Legacy_HD_2.0.19_Stream_ES5.ipk" -o base.ipk
+          echo "cae36c9a8ba249a5840c1b2682b16e43a93d3c0e4e44a3fad945c7e8122d8533  base.ipk" | sha256sum -c -
+      - name: Crear compatibilidad MD5 para Chromium 38
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          script=Path("scripts/build-lg-legacy-218-md5-compat.py").read_text()
+          script=script.replace("2.0.18","2.0.20").replace("2.0.17","2.0.19")
+          Path("build-220.py").write_text(script)
+          PY
+          python3 build-220.py
+          dpkg-deb --info CactusTV_LG_Legacy_HD_2.0.20_MD5_Compat.ipk
+          sha256sum CactusTV_LG_Legacy_HD_2.0.20_MD5_Compat.ipk > SHA256SUMS-220.txt
+      - name: Comprobar cambios y equivalencia MD5 en navegador simulado
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib
+          def collect(path):
+              src=pathlib.Path(path).read_bytes();pos=8
+              while pos<len(src):
+                  h=src[pos:pos+60];name=h[:16].decode().strip().rstrip('/');size=int(h[48:58])
+                  b=src[pos+60:pos+60+size];pos+=60+size+size%2
+                  if name=='data.tar.gz':break
+              with tarfile.open(fileobj=io.BytesIO(b),mode='r:gz') as t:
+                  return {m.name:t.extractfile(m).read() for m in t if m.isfile()}
+          old=collect('base.ipk')
+          new=collect('CactusTV_LG_Legacy_HD_2.0.20_MD5_Compat.ipk')
+          assert old.keys()==new.keys()
+          delta=sorted(x.rsplit('/',1)[-1] for x in old if old[x]!=new[x])
+          assert delta==['appinfo.json','device.js','services.json'],delta
+          device=next(x for x in new if x.endswith('/xuper/device.js'))
+          assert b':cactusMd5(i)' in new[device]
+          assert b':e.CryptoJS.MD5(i).toString()' not in new[device]
+          pathlib.Path('device-220.js').write_bytes(new[device])
+          print("Solo se modifican:",delta)
+          PY
+          node --check device-220.js
+          node <<'JS'
+          const fs=require('fs'),vm=require('vm'),crypto=require('crypto'),assert=require('assert');
+          const source=fs.readFileSync('device-220.js','utf8');
+          const suffix=source.match(/var i=r\+"([^"]+)",o=/);
+          assert(suffix,'No se detectó la construcción del identificador');
+          const context=vm.createContext({XuperConfig:{DEVICE_TEMPLATE:{product:'LG'}}});
+          vm.runInContext(source,context);
+          const tests=['a','abc','compatibilidad','ñandú','1234567890'.repeat(8),'HOLA🌵'];
+          for(const token of tests){
+             const store={'xuper.sn':'id-preexistente','xuper.drmId':'drm-preexistente',
+                          'xuper.identityVersion':'2','xuper.installationId':'installation-preexistente'};
+             const data={get:k=>store[k]||null,set:(k,v)=>{store[k]=v}};
+             const device=new context.XuperDevice.Device({storage:data});
+             device.acceptRegistration({isNew:'0',snToken:token});
+             const expected=crypto.createHash('md5').update(token+suffix[1],'utf8').digest('hex');
+             assert.strictEqual(device.sn,expected);
+             assert.strictEqual(store['xuper.registeredSn'],'1');
+          }
+          console.log('PASS: 6 casos MD5 idénticos a Node crypto, sin CryptoJS, en VM de navegador');
+          JS
+      - name: Publicar beta 2.0.20
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-legacy-hd-2.0.20-md5-chrome38"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Legacy_HD_2.0.20_MD5_Compat.ipk SHA256SUMS-220.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" CactusTV_LG_Legacy_HD_2.0.20_MD5_Compat.ipk SHA256SUMS-220.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG Legacy HD 2.0.20 - MD5 webOS 3" \
+              --notes "Beta específica de compatibilidad para LH6000 webOS 3.0. Corrige la excepción P01/asset/TypeError/UNDEFINED-MD5-device-1 cuando la función MD5 de la librería no está disponible. Añade una implementación MD5 local verificada contra Node crypto sin cambiar el formato del identificador, los protocolos, el reproductor ni el contenido. Conserva la pantalla completa 1280x720, la corrección ES5 en stream.js y la prueba local MP4 de 2.0.19. La reproducción aún requiere prueba en la TV real; no sustituye la descarga pública." \
+              --prerelease --latest=false
+          fi
