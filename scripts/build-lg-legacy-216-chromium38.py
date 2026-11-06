@@ -11,7 +11,7 @@ def from_ar(raw):
     p=8;out=[]
     while p<len(raw):
         h=raw[p:p+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58])
-        assert h[58:60]==b'|n'.replace(b'|',bytes((96,)))
+        assert h[58:60]==bytes((96,10))
         out.append((n,raw[p+60:p+60+sz]))
         p+=60+sz+sz%2
     assert p==len(raw)
