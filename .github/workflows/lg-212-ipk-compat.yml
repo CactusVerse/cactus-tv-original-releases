@@ -1,0 +1,113 @@
+name: Publicar LG 2.0.12 R9 - prueba de compatibilidad IPK
+on:
+  push:
+    paths:
+      - ".github/workflows/lg-212-ipk-compat.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  construir-y-publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar beta oficial publicada
+        run: |
+          curl -fL --retry 4 --retry-delay 3 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" \
+            -o origen.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  origen.ipk" | sha256sum -c -
+
+      - name: Reempaquetar sin modificar los archivos de la aplicación
+        run: |
+          cat > /tmp/repack.py <<'PY'
+          import io, tarfile, hashlib, pathlib
+          original=pathlib.Path('origen.ipk').read_bytes()
+          assert original.startswith(b'!<arch>\n')
+          def parse_ar(raw):
+              pos=8; result={}
+              while pos+60<=len(raw):
+                  header=raw[pos:pos+60]
+                  assert header[58:60]==bytes((96,10))
+                  n=header[:16].decode('ascii').strip().rstrip('/')
+                  length=int(header[48:58])
+                  assert n not in result
+                  result[n]=raw[pos+60:pos+60+length]
+                  pos+=60+length+length%2
+              assert pos==len(raw)
+              return result
+          def fix_archive(compressed, is_control=False):
+              output=io.BytesIO()
+              fingerprints={}
+              with tarfile.open(fileobj=io.BytesIO(compressed),mode='r:gz') as source,tarfile.open(fileobj=output,mode='w:gz',format=tarfile.USTAR_FORMAT,compresslevel=6) as target:
+                  for member in source:
+                      name=member.name
+                      while name.startswith('./'):
+                          name=name[2:]
+                      if name in ('','.'):
+                          if is_control:
+                              member.name='.'
+                              member.mode=0o755
+                              member.uid=member.gid=0
+                              target.addfile(member)
+                          continue
+                      assert not name.startswith('/') and '..' not in name.split('/')
+                      assert member.isfile() or member.isdir()
+                      member.name=('./' if is_control else '')+name
+                      member.uid=member.gid=0
+                      member.uname=member.gname=''
+                      member.mode=0o755 if member.isdir() else member.mode & 0o777
+                      content=None if member.isdir() else source.extractfile(member).read()
+                      if content is not None:
+                          assert len(content)==member.size
+                          fingerprints[name]=hashlib.sha256(content).hexdigest()
+                      target.addfile(member,io.BytesIO(content) if content is not None else None)
+              gz=output.getvalue()
+              return gz[:4]+bytes(4)+gz[8:],fingerprints
+          def make_ar(chunks):
+              out=io.BytesIO()
+              out.write(b'!<arch>\n')
+              for name,contents in chunks:
+                  stamp=1793925829
+                  h=f'{name:<16}{stamp:<12}{0:<6}{0:<6}{"100644":<8}{len(contents):<10}'+chr(96)+'\n'
+                  assert len(h)==60
+                  out.write(h.encode('ascii'))
+                  out.write(contents)
+                  if len(contents)%2: out.write(b'\n')
+              return out.getvalue()
+          parts=parse_ar(original)
+          assert list(parts)==['debian-binary','control.tar.gz','data.tar.gz']
+          control,_=fix_archive(parts['control.tar.gz'],True)
+          data,appfiles=fix_archive(parts['data.tar.gz'])
+          result=make_ar([('debian-binary',b'2.0\n'),('control.tar.gz',control),('data.tar.gz',data)])
+          dest=pathlib.Path('CactusTV_LG_2.0.12_R9_Compat.ipk')
+          dest.write_bytes(result)
+          assert parse_ar(result)['debian-binary']==b'2.0\n'
+          assert len(appfiles)==91
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as check:
+              entries=check.getmembers()
+              assert entries[0].name=='usr'
+              assert not any(item.name.startswith('./') for item in entries)
+              fingerprints={i.name:hashlib.sha256(check.extractfile(i).read()).hexdigest() for i in entries if i.isfile()}
+              assert fingerprints==appfiles
+          with tarfile.open(fileobj=io.BytesIO(control),mode='r:gz') as check:
+              assert check.getmembers()[0].mode==0o755
+          print('Repaquetado:',len(appfiles),'archivos conservados; SHA256=',hashlib.sha256(result).hexdigest())
+          PY
+          python3 /tmp/repack.py
+          dpkg-deb --info CactusTV_LG_2.0.12_R9_Compat.ipk
+          sha256sum CactusTV_LG_2.0.12_R9_Compat.ipk > SHA256SUMS-LG-Compat.txt
+
+      - name: Crear lanzamiento experimental
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-2.0.12-r9-compat-test"
+          gh release create "$TAG" \
+            CactusTV_LG_2.0.12_R9_Compat.ipk SHA256SUMS-LG-Compat.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Cactus TV LG 2.0.12 R9 - Instalación compatible (prueba)" \
+            --notes "Prueba experimental para resolver Failed to extract package en algunos LG. Contiene los mismos 91 archivos de Cactus TV 2.0.12; se ha recompuesto el IPK con el esquema AR/USTAR clásico de las betas que se instalaron: data.tar.gz sin prefijo ./, sin directorio raíz con bit setgid y cabeceras AR con fecha válida. La descarga principal permanece sin cambios hasta confirmar la prueba en la otra TV. webOS4 ARMv7: otros modelos pueden necesitar una compilación adicional. Requiere Developer Mode." \
+            --prerelease \
+            --latest=false
