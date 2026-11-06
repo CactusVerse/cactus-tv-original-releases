@@ -1,0 +1,76 @@
+name: Publicar LG Installer Android v0.1.3 beta
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publicar-lg-android.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Descargar codigo publico
+        uses: actions/checkout@v4
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Revisar SDK Android de GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$ANDROID_HOME/platforms/android-35" ] && [ -d "$ANDROID_HOME/build-tools/35.0.0" ]; then
+            echo "Android SDK ya instalado"
+          else
+            sdk="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | head -n 1)"
+            test -n "$sdk" || { echo 'No existe sdkmanager'; exit 1; }
+            "$sdk" --install 'platforms;android-35' 'build-tools;35.0.0'
+          fi
+      - name: Preparar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Compilar APK de prueba
+        run: gradle -p lg-installer :app:assembleDebug --no-daemon --stacktrace
+      - name: Verificar y preparar archivos
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk='lg-installer/app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$apk"
+          cp "$apk" dist/CactusTV-LG-Installer-Android-v0.1.3-beta.apk
+          (cd dist && sha256sum CactusTV-LG-Installer-Android-v0.1.3-beta.apk > SHA256SUMS-LG-Installer.txt)
+          ls -lh dist
+      - name: Publicar descarga en GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: cactus-lg-installer-android-v0.1.3-beta
+          name: 'Cactus TV Installer LG Android v0.1.3 — beta'
+          prerelease: true
+          draft: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/CactusTV-LG-Installer-Android-v0.1.3-beta.apk
+            dist/SHA256SUMS-LG-Installer.txt
+          body: |
+            ## Cactus TV Installer LG para Android v0.1.3 (beta)
+            Instala paquetes locales .ipk en LG webOS desde tu celular Android, sin computadora.
+
+            ### Funciones
+            - Conexión al LG por Developer Mode, Key Server y SSH con huella verificada
+            - Compatibilidad con servidores SSH webOS antiguos, incluido ssh-rsa cuando corresponde
+            - Selector de archivos IPK y explorador alternativo con mensajes de diagnóstico
+            - Transferencia e instalación mediante SFTP y servicio de aplicaciones de webOS
+
+            ### Antes de usar
+            Debes tener una TV LG con Developer Mode y Key Server activados, y un .ipk autorizado descargado por separado. El APK NO incluye paquetes ni contenidos multimedia.
+
+            **Esta es una beta, no una versión estable.** Firmada con clave temporal de prueba de GitHub Actions: si usaste una beta anterior, quizá debas desinstalarla por diferencia de firma. Se requiere firma permanente para actualizaciones futuras.
+
+            Código fuente y documentación: https://github.com/CactusVerse/cactus-tv-original-releases/tree/main/lg-installer
+            Proyecto independiente, no afiliado a LG. Usa JSch: https://github.com/mwiede/jsch
