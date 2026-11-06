@@ -1,0 +1,77 @@
+name: Publicar LG Legacy HD 2.0.16 - Chrome38 crypto fix
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-legacy-216-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verificar-y-publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar Legacy HD 2.0.15 verificada
+        run: |
+          curl -fL --retry 4 --retry-delay 2 \
+            https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-legacy-hd-2.0.15-diagnostico/CactusTV_LG_Legacy_HD_2.0.15_Diagnostico.ipk -o base.ipk
+          echo "725bb431c9784dadbd5646a0f05a67e01cfeb75a4d6e69944dd30ee1aff4c6c4  base.ipk" | sha256sum -c -
+      - name: Reconstruir IPK Legacy HD para Chromium 38
+        run: |
+          python3 scripts/build-lg-legacy-216-chromium38.py
+          dpkg-deb --info CactusTV_LG_Legacy_HD_2.0.16_Chrome38_Fix.ipk
+          sha256sum CactusTV_LG_Legacy_HD_2.0.16_Chrome38_Fix.ipk > SHA256SUMS-LG-Legacy-216.txt
+      - name: Probar fallo antiguo y corrección sin TypedArray.slice
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib
+          def get(path):
+              data=pathlib.Path(path).read_bytes();p=8
+              while p<len(data):
+                  h=data[p:p+60];size=int(h[48:58]);name=h[:16].decode().strip().rstrip('/')
+                  chunk=data[p+60:p+60+size];p+=60+size+size%2
+                  if name!='data.tar.gz':continue
+                  with tarfile.open(fileobj=io.BytesIO(chunk),mode='r:gz') as t:
+                      file=next(m for m in t if m.name.endswith('/xuper/crypto3des.js'))
+                      return t.extractfile(file).read()
+              raise Exception('No data.tar.gz')
+          pathlib.Path('crypto-old.js').write_bytes(get('base.ipk'))
+          pathlib.Path('crypto-fixed.js').write_bytes(get('CactusTV_LG_Legacy_HD_2.0.16_Chrome38_Fix.ipk'))
+          PY
+          node --check crypto-fixed.js
+          node <<'JS'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          function lib(filename,disableSlice){
+            const ctx=vm.createContext({});
+            vm.runInContext('this.window=this;'+(disableSlice?'Uint8Array.prototype.slice=undefined;':''),ctx);
+            vm.runInContext(fs.readFileSync(filename,'utf8'),ctx,{filename});
+            return ctx.XuperCrypto;
+          }
+          const modern=lib('crypto-old.js',false);
+          const oldBrowser=lib('crypto-old.js',true);
+          const fixed=lib('crypto-fixed.js',true);
+          for(const word of ['hola','Cactus TV HD','Cactus TV español']){
+            assert.throws(()=>oldBrowser.wrap(word,'portal'),TypeError);
+            const encrypted=modern.wrap(word,'portal');
+            assert.strictEqual(fixed.wrap(word,'portal'),encrypted);
+            assert.strictEqual(fixed.unwrap(encrypted,'portal'),word);
+          }
+          console.log('PASS: Chrome38 emulado, misma salida 3DES, vuelta completa');
+          JS
+      - name: Publicar prueba 2.0.16 separada de la beta Legacy de la web
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-legacy-hd-2.0.16-crypto38-fix"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Legacy_HD_2.0.16_Chrome38_Fix.ipk SHA256SUMS-LG-Legacy-216.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_Legacy_HD_2.0.16_Chrome38_Fix.ipk SHA256SUMS-LG-Legacy-216.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG Legacy HD 2.0.16 - fix 3DES Chrome 38" \
+              --notes "Corrección dirigida del error P01/asset/TypeError/METHOD-undefined-crypto3des-1 encontrado en LG LH6000 webOS 3.0. Sustituye TypedArray.slice (Chrome 45+) por subarray (Chrome 7+) para cortar la llave 3DES. Conserva pantalla HD 1280x720, catálogo y reproductor anteriores. Validada en simulación de Chrome38 sin TypedArray.slice con cifrado/descifrado equivalente, pero falta validar en LH6000 real. No reemplaza la beta Legacy pública hasta confirmarlo." \
+              --prerelease --latest=false
+          fi
