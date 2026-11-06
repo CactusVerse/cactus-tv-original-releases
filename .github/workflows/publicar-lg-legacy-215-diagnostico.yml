@@ -1,0 +1,108 @@
+name: Publicar LG Legacy HD 2.0.15 diagnostico P01
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-legacy-215-diagnostico.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar beta Legacy HD 2.0.14 verificada
+        run: |
+          curl -fL --retry 3 --retry-delay 2 \
+            https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-webos3-lh6000-hd-2.0.14-test/CactusTV_LG_2.0.14_webOS3_LH6000_HD.ipk -o base.ipk
+          echo "c4f58b63be19787a97d1b9ae6f220027c5c90fb0866a550600c2f3570f1421bc  base.ipk" | sha256sum -c -
+      - name: Añadir diagnóstico seguro de preparación del video
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,json,hashlib,subprocess
+          from copy import copy
+          def parts(b):
+            assert b.startswith(b'!<arch>\n');p=8;rows=[]
+            while p<len(b):
+              h=b[p:p+60];size=int(h[48:58]);n=h[:16].decode().strip().rstrip('/')
+              rows.append((n,b[p+60:p+60+size]));p+=60+size+size%2
+            assert p==len(b)
+            return dict(rows)
+          def readtar(b):
+            with tarfile.open(fileobj=io.BytesIO(b),mode='r:gz') as t:
+              return [(copy(e),t.extractfile(e).read() if e.isfile() else None) for e in t]
+          def tar(rows):
+            buf=io.BytesIO()
+            with tarfile.open(fileobj=buf,mode='w:gz',format=tarfile.USTAR_FORMAT,compresslevel=6) as t:
+              for m,d in rows:
+                x=copy(m);x.uid=x.gid=0;x.uname=x.gname=''
+                t.addfile(x,io.BytesIO(d) if d is not None else None)
+            b=buf.getvalue()
+            return b[:4]+bytes(4)+b[8:]
+          def ar(rows):
+            out=io.BytesIO();out.write(b'!<arch>\n')
+            for name,b in rows:
+              h=f'{name:<16}{1794000000:<12}{0:<6}{0:<6}{"100644":<8}{len(b):<10}'+chr(96)+'\n'
+              assert len(h)==60
+              out.write(h.encode());out.write(b)
+              if len(b)%2:out.write(b'\n')
+            return out.getvalue()
+          source=parts(pathlib.Path('base.ipk').read_bytes())
+          app=readtar(source['data.tar.gz']);ctrl=readtar(source['control.tar.gz']);changes=[]
+          hint='''function safeErrorHint(e){
+           var msg=String(e&&e.message||'').slice(0,400),stack=String(e&&e.stack||'').slice(0,1200),kind='JS',key='',location='';
+           if(/not a function/i.test(msg))kind='METHOD';else if(/undefined/i.test(msg))kind='UNDEFINED';else if(/null/i.test(msg))kind='NULL';else if(/InvalidState/i.test(msg))kind='STATE';
+           var p=/reading [\\x27\\x22]([a-zA-Z_$][\\w$]{0,35})[\\x27\\x22]/.exec(msg)||/property [\\x27\\x22]([a-zA-Z_$][\\w$]{0,35})[\\x27\\x22]/.exec(msg)||/([a-zA-Z_$][\\w$]{0,35}) is not a function/.exec(msg);
+           if(p)key='-'+p[1];
+           var src=/(direct-api|webos-fetch|api|device|session|crypto3des|provider-worker)\\.js:(\\d{1,5})(?::\\d{1,5})?/.exec(stack);
+           if(src)location='-'+src[1]+'-'+src[2];
+           return (kind+key+location).slice(0,85);
+          }
+          '''
+          for i,(m,data) in enumerate(app):
+            if data is None:continue
+            if m.name.endswith('/direct-api.js'):
+              s=data.decode()
+              assert s.count(' function callback(p,done){')==1
+              s=s.replace(' function callback(p,done){',' '+hint+' function callback(p,done){')
+              a='error.cactusPhase=e.cactusPhase;done(error);'
+              assert s.count(a)==1;s=s.replace(a,'error.cactusPhase=e.cactusPhase;error.cactusHint=e.cactusHint||safeErrorHint(e);done(error);')
+              a='e.cactusPhase=phase;throw e;'
+              assert s.count(a)==1;s=s.replace(a,'e.cactusPhase=phase;e.cactusHint=safeErrorHint(e);throw e;')
+              data=s.encode();changes.append(m.name)
+              subprocess.run(['node','--check','-'],input=data,check=True)
+            if m.name.endswith('/playback-support.js'):
+              s=data.decode()
+              a="(r.code==='P01'&&detail(record)?'/'+detail(record):'')+').';"
+              b="(r.code==='P01'&&detail(record)?'/'+detail(record):'')+(r.code==='P01'&&error&&/^[A-Z_$a-z0-9-]{1,85}$/.test(error.cactusHint||'')?'/'+error.cactusHint:'')+').';"
+              assert s.count(a)==1;s=s.replace(a,b);data=s.encode();changes.append(m.name)
+              subprocess.run(['node','--check','-'],input=data,check=True)
+            if m.name.endswith('/appinfo.json'):
+              v=json.loads(data);v['version']='2.0.15';v['title']='Cactus TV LG Legacy HD Diag';v['appDescription']='Legacy HD con diagnóstico P01/asset/TypeError; gráficos 1280x720.'
+              assert v['resolution']=='1280x720';data=json.dumps(v,indent=2,ensure_ascii=False).encode();changes.append(m.name)
+            if m.name.endswith('/services.json'):
+              v=json.loads(data);v['version']='2.0.15';data=json.dumps(v,indent=2,ensure_ascii=False).encode();changes.append(m.name)
+            m.size=len(data);app[i]=(m,data)
+          assert len(changes)==4,changes
+          for i,(m,data) in enumerate(ctrl):
+            if m.name.endswith('control'):
+              data=data.replace(b'Version: 2.0.14',b'Version: 2.0.15');m.size=len(data);ctrl[i]=(m,data)
+          result=ar([('debian-binary',source['debian-binary']),('control.tar.gz',tar(ctrl)),('data.tar.gz',tar(app))])
+          name='CactusTV_LG_Legacy_HD_2.0.15_Diagnostico.ipk'
+          pathlib.Path(name).write_bytes(result)
+          verify=parts(result)
+          assert len(readtar(verify['data.tar.gz']))==len(app)
+          print('Modificados:',changes,'SHA256:',hashlib.sha256(result).hexdigest())
+          PY
+          dpkg-deb --info CactusTV_LG_Legacy_HD_2.0.15_Diagnostico.ipk
+          sha256sum CactusTV_LG_Legacy_HD_2.0.15_Diagnostico.ipk > SHA256SUMS-LG-Legacy-215.txt
+      - name: Publicar como beta separada
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "lg-legacy-hd-2.0.15-diagnostico" \
+            CactusTV_LG_Legacy_HD_2.0.15_Diagnostico.ipk SHA256SUMS-LG-Legacy-215.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Cactus TV LG Legacy HD 2.0.15 - diagnostico P01" \
+            --notes "Beta de diagnóstico para LH6000 webOS 3.0. Mantiene el ajuste 1280x720 de la 2.0.14 y el reproductor sin cambios. Si la preparación del video da P01/asset/TypeError, muestra únicamente una pista técnica sanitizada (sin URLs, tokens ni credenciales) para identificar la llamada incompatible. No sustituye la descarga Legacy pública hasta comprobarla en la TV afectada." \
+            --prerelease \
+            --latest=false
