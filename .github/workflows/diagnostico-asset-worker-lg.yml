@@ -1,0 +1,31 @@
+name: Inspeccionar origen TypeError asset LG 3
+on:
+  push:
+    paths:
+      - ".github/workflows/diagnostico-asset-worker-lg.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspeccionar:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fL --retry 4 --retry-delay 2 https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-webos3-lh6000-hd-2.0.14-test/CactusTV_LG_2.0.14_webOS3_LH6000_HD.ipk -o original.ipk
+          python3 - <<'PY'
+          import pathlib,tarfile,io,re
+          raw=pathlib.Path('original.ipk').read_bytes();pos=8
+          while pos<len(raw):
+            h=raw[pos:pos+60];size=int(h[48:58]);name=h[:16].decode().strip().rstrip('/');v=raw[pos+60:pos+60+size];pos+=60+size+size%2
+            if name=='data.tar.gz':break
+          with tarfile.open(fileobj=io.BytesIO(v),mode='r:gz') as t:
+            d={m.name.split('/')[-1]:t.extractfile(m).read().decode('utf-8','replace') for m in t if m.isfile() and m.name.endswith('.js')}
+          print('JS FILES:',','.join(d))
+          for name,content in d.items():
+            if name.startswith('vendor/'):continue
+            matches=list(re.finditer(r'asset|prepare\s*[:=(]|provider-worker|phase\s*=|fetch\s*\(|crypto\.|navigator\.serviceWorker|new\s+URL\(',content,re.I))
+            if matches and name not in ('vendor','hls.min.js','xuper','tmdb','catalog.js'):
+              print('\nFILE',name,'length',len(content))
+              for m in matches[:19]:
+                print('MATCH',m.group(0),repr(content[max(0,m.start()-180):min(len(content),m.end()+520)][:850]))
+          PY
