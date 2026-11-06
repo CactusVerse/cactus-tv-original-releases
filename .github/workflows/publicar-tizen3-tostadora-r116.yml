@@ -1,0 +1,65 @@
+name: Publicar Cactus TV Tizen 3 Tostadora R11.6
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-tizen3-tostadora-r116.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descargar la Legacy R9 original
+        run: |
+          curl -fL --retry 4 --retry-delay 3 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/samsung-wgt-r9-2026-11-05/CactusTV_Samsung_Legacy_R9.wgt" \
+            -o scripts/CactusTV_Samsung_Legacy_R9.wgt
+
+      - name: Reconstruir Tizen 3 Tostadora R11.6 y verificar contenido
+        run: |
+          python3 scripts/build-tizen3-tostadora-r116.py
+          mkdir -p dist
+          mv scripts/CactusTV_Tizen3_Tostadora_R11.6.wgt dist/
+          python3 - <<'PY'
+          import hashlib,zipfile
+          path='dist/CactusTV_Tizen3_Tostadora_R11.6.wgt'
+          with zipfile.ZipFile(path) as z:
+              assert len(z.namelist())==63
+              assert z.testzip() is None
+              assert b'required_version="2.3"' in z.read('config.xml')
+              assert b'version="0.2.12"' in z.read('config.xml')
+          print('WGT integrity OK',hashlib.sha256(open(path,'rb').read()).hexdigest())
+          PY
+          cd dist
+          sha256sum CactusTV_Tizen3_Tostadora_R11.6.wgt > SHA256SUMS-Tizen3-Tostadora.txt
+
+      - name: Publicar beta de compatibilidad Tizen 3 Tostadora
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Cactus TV Legacy R11.6 (0.2.12), edición **Tizen 3 Tostadora**.
+          
+          - Prueba de funcionamiento comunicada por el desarrollador en Samsung UN40MU6103 de 2017, Tizen 3.0.
+          - Corrección del inicio de video VOD mediante Media Source Extensions y compatibilidad CryptoJS.
+          - Incluye películas, series, anime y canales en vivo mediante fuentes autorizadas.
+          - Beta para televisores antiguos. No se garantiza compatibilidad con todos los Tizen 3.0.
+          - WGT preparado para que Apps2Samsung firme el paquete con el perfil del televisor; no incluye certificados privados.
+          - Se conserva separada de Samsung R9 y Samsung Legacy R9.
+          NOTES
+          TAG="samsung-tizen3-tostadora-r11-6"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/CactusTV_Tizen3_Tostadora_R11.6.wgt dist/SHA256SUMS-Tizen3-Tostadora.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              dist/CactusTV_Tizen3_Tostadora_R11.6.wgt dist/SHA256SUMS-Tizen3-Tostadora.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV - Tizen 3 Tostadora (R11.6 beta)" \
+              --notes-file release-notes.md \
+              --prerelease --latest=false
+          fi
