@@ -1,0 +1,89 @@
+name: Publicar LG Legacy HD 2.0.17 - 3DES compatible
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-legacy-217-crypto.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verificar-y-publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar beta 2.0.16 verificada
+        run: |
+          curl -fL --retry 4 --retry-delay 2 \
+            https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-legacy-hd-2.0.16-crypto38-fix/CactusTV_LG_Legacy_HD_2.0.16_Chrome38_Fix.ipk -o base.ipk
+          echo "f0e1b47881cc89d70a11d5a9d4302712100f191d9017403dbc55bff43c315e6e  base.ipk" | sha256sum -c -
+      - name: Reconstruir beta 2.0.17
+        run: |
+          python3 scripts/build-lg-legacy-217-crypto-compat.py
+          dpkg-deb --info CactusTV_LG_Legacy_HD_2.0.17_Crypto_Compat.ipk
+          sha256sum CactusTV_LG_Legacy_HD_2.0.17_Crypto_Compat.ipk > SHA256SUMS-LG-Legacy-217.txt
+      - name: Verificar compatibilidad con navegador antiguo
+        run: |
+          python3 - <<'PY'
+          import pathlib,io,tarfile
+          def getfiles(path):
+              b=pathlib.Path(path).read_bytes();pos=8
+              while pos<len(b):
+                  h=b[pos:pos+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58])
+                  data=b[pos+60:pos+60+sz];pos+=60+sz+sz%2
+                  if n=='data.tar.gz':break
+              with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as tar:
+                  return {m.name:tar.extractfile(m).read() for m in tar if m.isfile()}
+          a=getfiles('base.ipk');b=getfiles('CactusTV_LG_Legacy_HD_2.0.17_Crypto_Compat.ipk')
+          assert a.keys()==b.keys()
+          changed=[n for n in a if a[n]!=b[n]]
+          assert len(changed)==3,changed
+          print('Modificados solo: ',changed)
+          for n in b:
+              if n.endswith('/xuper/crypto3des.js'):
+                  pathlib.Path('crypto-old.js').write_bytes(a[n])
+                  pathlib.Path('crypto-fixed.js').write_bytes(b[n])
+              if n.endswith('/vendor/crypto-js.js'):
+                  pathlib.Path('crypto-vendor.js').write_bytes(b[n])
+          PY
+          node --check crypto-fixed.js
+          node <<'JS'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const vendor=fs.readFileSync('crypto-vendor.js','utf8');
+          const old=fs.readFileSync('crypto-old.js','utf8');
+          const updated=fs.readFileSync('crypto-fixed.js','utf8');
+          function boot(source,broken){
+            const c=vm.createContext({});c.window=c;
+            vm.runInContext('Uint8Array.prototype.slice=undefined;Array.prototype.find=undefined;Object.assign=undefined;',c);
+            vm.runInContext(vendor,c);
+            if(broken)vm.runInContext('CryptoJS.TripleDES.encrypt=undefined;',c);
+            vm.runInContext(source,c);
+            return c.XuperCrypto;
+          }
+          const original=boot(old,false),broken=boot(old,true),fixed=boot(updated,true);
+          assert.throws(()=>broken.wrap('Prueba','portal'),e=>e&&e.name==='TypeError');
+          for(const key of ['portal','static']){
+            for(const msg of ['','hola','Cactus TV LG HD','Español y acentos','123456789','a'.repeat(95)]){
+              const expected=original.wrap(msg,key);
+              assert.strictEqual(fixed.wrap(msg,key),expected);
+              assert.strictEqual(fixed.unwrap(expected,key),msg);
+            }
+          }
+          console.log('PASS: 12 casos equivalentes + ruta CryptoJS defectuosa recuperada sin TypedArray.slice');
+          JS
+      - name: Publicar beta privada de cambios hasta validación real
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-legacy-hd-2.0.17-crypto-compat"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Legacy_HD_2.0.17_Crypto_Compat.ipk SHA256SUMS-LG-Legacy-217.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_Legacy_HD_2.0.17_Crypto_Compat.ipk SHA256SUMS-LG-Legacy-217.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG Legacy HD 2.0.17 - 3DES compatible webOS 3" \
+              --notes "Beta específica para LG LH6000 webOS 3.0. La versión 2.0.16 solo reemplazó TypedArray.slice, pero el navegador ejecutaba la rama CryptoJS, por lo que el error P01/asset/TypeError podía persistir. Esta nueva build obliga a utilizar el algoritmo de 3DES JavaScript independiente (browser) para cifrado y descifrado, manteniendo la implementación crypto nativa del servicio Node y sin modificar catálogo, reproductor ni resolución HD 1280x720. Validada en Node VM con navegador antiguo emulado, CryptoJS simulado defectuoso y comparación de los resultados criptográficos; no garantiza que la reproducción funcione hasta probarla en LH6000. La beta Legacy pública sigue sin reemplazarse." \
+              --prerelease --latest=false
+          fi
