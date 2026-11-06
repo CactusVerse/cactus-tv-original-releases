@@ -1,0 +1,68 @@
+name: Publicar LG Legacy HD 2.0.19 - stream.js ES5
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-legacy-219-stream.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar IPK LG Legacy HD 2.0.18 original verificado
+        run: |
+          curl -fL --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-legacy-hd-2.0.18-mp4-test/CactusTV_LG_Legacy_HD_2.0.18_MP4_Compat.ipk" -o base.ipk
+          echo "813e501e452ef7b062c127c7cc16944c9c436cc74be44a316104020eaa4552e5  base.ipk" | sha256sum -c -
+      - name: Reconstruir versión 2.0.19
+        run: |
+          python3 scripts/build-lg-legacy-219-stream-es5.py
+          dpkg-deb --info CactusTV_LG_Legacy_HD_2.0.19_Stream_ES5.ipk
+          node --check stream-219.js
+          sha256sum CactusTV_LG_Legacy_HD_2.0.19_Stream_ES5.ipk > SHA256SUMS-LG-Legacy-219.txt
+      - name: Validar corrección estricta y conservación de reproductor
+        run: |
+          python3 - <<'PY'
+          import tarfile,io,pathlib,json,re
+          def extract(path):
+            source=pathlib.Path(path).read_bytes();i=8
+            while i<len(source):
+              hdr=source[i:i+60];name=hdr[:16].decode().strip().rstrip('/')
+              size=int(hdr[48:58]);value=source[i+60:i+60+size];i+=60+size+size%2
+              if name=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(value),mode='r:gz') as f:
+              return {m.name:f.extractfile(m).read() for m in f if m.isfile()}
+          old=extract('base.ipk');new=extract('CactusTV_LG_Legacy_HD_2.0.19_Stream_ES5.ipk')
+          assert old.keys()==new.keys()
+          changed=sorted(k.rsplit('/',1)[-1] for k in old if old[k]!=new[k])
+          assert changed==['appinfo.json','services.json','stream.js'],changed
+          script=next(new[n] for n in new if n.endswith('/xuper/stream.js')).decode('utf-8')
+          assert re.search(r'if\("vod"===e\)\{var h=.*?;var v=function\(e\)',script)
+          assert not re.search(r'if\("vod"===e\)\{[^{}]*\bfunction v\(',script)
+          assert '].join("&")};var m=' in script
+          meta=json.loads(next(new[n] for n in new if n.endswith('/appinfo.json')))
+          assert meta['version']=='2.0.19' and meta['resolution']=='1280x720'
+          assert any(n.endswith('/app/cactus-demo.mp4') for n in new)
+          for name in new:
+            if name.endswith(('/playback-controls.js','/direct-media.js','/xuper/device.js')):
+              assert new[name]==old[name],name
+          print('PASS: Chrome38 compatible block declaration corrected, other app content unchanged')
+          PY
+      - name: Publicar beta de prueba en GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-legacy-hd-2.0.19-stream-es5"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Legacy_HD_2.0.19_Stream_ES5.ipk SHA256SUMS-LG-Legacy-219.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" CactusTV_LG_Legacy_HD_2.0.19_Stream_ES5.ipk SHA256SUMS-LG-Legacy-219.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG Legacy HD 2.0.19 - corrección stream.js Chromium 38" \
+              --notes "Beta LG LH6000 webOS 3.0. Resuelve SyntaxError por function v declarada dentro de un if en stream.js en modo estricto (Chromium 38). Sustituye por var v=function(...), manteniendo semántica del cierre. Parte de 2.0.18, conserva MP4 de prueba progresivo, CSS 1280x720 y el resto de la aplicación. Verificado: integridad IPK, sintaxis JavaScript y que no se modifican otras funciones. La reproducción todavía debe validarse en la TV afectada. No reemplaza la Legacy pública." \
+              --prerelease --latest=false
+          fi
