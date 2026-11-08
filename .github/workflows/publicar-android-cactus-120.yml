@@ -1,0 +1,74 @@
+name: Publicar Cactus TV Android TV y celular 1.2.0 SIN VPN
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publicar-android-cactus-120.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TAG: android-1.2.0-beta11
+      SOURCE_URL: 'https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-4528-820e-aff7-c2d1497f56bb/raw?se=2026-11-08T16%3A18%3A37Z&sp=r&sv=2026-02-06&sr=b&scid=ffb3aff1-1cf6-5800-980e-bcf428397e24&skoid=68f37fa7-4e08-478b-93f3-c72d563a0ab3&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-11-08T12%3A33%3A47Z&ske=2026-11-09T12%3A33%3A47Z&sks=b&skv=2026-02-06&sig=NHGfy9qFiwUGiyB1HOFd4AXtxYIyeu3jeSfAgwbB9Ro%3D'
+    steps:
+      - name: Descargar APK oficiales sin VPN
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 "$SOURCE_URL" -o /tmp/cactus-android-120.zip
+          test "$(stat -c%s /tmp/cactus-android-120.zip)" -gt 100000000
+          unzip -tq /tmp/cactus-android-120.zip >/dev/null
+          unzip -q /tmp/cactus-android-120.zip 'entregables/*'
+          mv entregables dist
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,zipfile
+          checks=(Path('dist')/'SHA256SUMS.txt').read_text().splitlines()
+          expected={
+            'CactusTV-Android-TV-1.2.0-beta11.apk':'cb98722a4274d0837229582ec076ec217cae2f149146446b568cde1dc38832f8',
+            'CactusTV-Android-Celular-1.2.0-beta11.apk':'89565fd36ac152ad46209230af6dfb714416e31cf032f844b9315d75431112a2'
+          }
+          assert len(checks)==2 and len(expected)==2
+          for name,sha in expected.items():
+              apk=Path('dist')/name
+              assert apk.is_file() and apk.stat().st_size>70000000,name
+              assert hashlib.sha256(apk.read_bytes()).hexdigest()==sha,name
+              with zipfile.ZipFile(apk) as z:
+                  assert z.testzip() is None
+                  files=z.namelist()
+                  assert any(p.endswith('cactus-live-flow-120.js') for p in files)
+                  assert not any(p.endswith('cactus-vpn.js') or p.endswith('xuper-profiles.json') for p in files), 'Esta publicación debe ser SIN VPN'
+              assert any(sha in item and name in item for item in checks)
+              print('APK sin VPN validada:',name)
+          PY
+      - name: Publicar dos APK en una release pública
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > notas.md <<'EOF'
+          ## Cactus TV Android 1.2.0 Beta 11 — SIN VPN
+
+          Descargas oficiales gratuitas de **Android TV** y **Android celular**.
+          Mejora el control remoto de TV en vivo: categorías → flecha derecha → canales,
+          vista previa al seleccionar un canal y OK para reproducir a pantalla completa.
+          Conserva el catálogo, el diseño Desierto y los canales ya incluidos.
+
+          **Estas APK NO incluyen VPN.** La línea de pruebas VPN continúa separada y no se publica aquí.
+          Se adjuntan SHA-256 para verificar los archivos.
+          EOF
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.apk dist/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/*.apk dist/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title 'Cactus TV Android TV y Android celular 1.2.0 (sin VPN)' \
+              --notes-file notas.md --prerelease --latest=false
+          fi
