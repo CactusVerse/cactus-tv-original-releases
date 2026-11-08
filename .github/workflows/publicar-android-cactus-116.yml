@@ -1,0 +1,68 @@
+name: Publicar Cactus TV Android TV y celular 1.1.6
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publicar-android-cactus-116.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TAG: android-1.1.6-beta7
+      SOURCE_URL: 'https://sdmntprcentralus.oaiusercontent.com/files/00000000-f2b4-81f5-b956-53dee898b584/raw?se=2026-11-08T05%3A21%3A30Z&sp=r&sv=2026-02-06&sr=b&scid=4739ac57-4500-53af-a039-46648754f402&skoid=add8ee7d-5fc7-451e-b06e-a82b2276cf62&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-11-07T21%3A50%3A34Z&ske=2026-11-08T21%3A50%3A34Z&sks=b&skv=2026-02-06&sig=VTkMms0D1u37FRvjTs3AFxtXTS2rYSZZTIzTCVOpVXs%3D'
+    steps:
+      - name: Descargar APK verificadas
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 "$SOURCE_URL" -o /tmp/cactus-android.zip
+          test "$(stat -c%s /tmp/cactus-android.zip)" -gt 100000000
+          unzip -tq /tmp/cactus-android.zip >/dev/null
+          unzip -q /tmp/cactus-android.zip 'entregables/*'
+          mv entregables dist
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          checks=(Path('dist')/'SHA256SUMS.txt').read_text().splitlines()
+          assert len(checks)==2
+          for check in checks:
+              digest,full_name=check.split(maxsplit=1)
+              f=Path('dist')/Path(full_name).name
+              assert f.is_file() and f.stat().st_size>70_000_000
+              actual=hashlib.sha256(f.read_bytes()).hexdigest()
+              assert actual==digest, f'Hash incorrecto: {f}'
+              print(f'APK correcta: {f.name} {f.stat().st_size} bytes, SHA-256 {digest}')
+          PY
+
+      - name: Publicar dos APK como release pública
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > notas.md <<'EOF'
+          # Cactus TV Android 1.1.6
+
+          **Android TV** y **Android celular**. Mismo diseño Desierto que la línea WGT, categorías Cactus del WGT 036 al inicio de TV en vivo y navegación adaptada a control remoto o pantalla táctil.
+
+          Incluye catálogo WGT 036 y vista previa opcional. La disponibilidad de señales externas depende de los proveedores y sus permisos.
+
+          Estas APK corresponden a la Beta 7 aprobada en pruebas por su desarrollador. Se recomienda comprobar compatibilidad del dispositivo y contar con derechos para utilizar las fuentes multimedia accesibles desde la app.
+
+          Código de verificación SHA-256 adjunto. Las versiones experimentales pueden instalarse como aplicación independiente.
+          EOF
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.apk dist/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/*.apk dist/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV Android TV y Android celular 1.1.6" \
+              --notes-file notas.md \
+              --prerelease --latest=false
+          fi
