@@ -1,0 +1,33 @@
+name: Comparar nuevos canales Android TV beta11 con Samsung049
+on:
+  push:
+    paths: [".github/workflows/comparar-android-lg-canales.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar y verificar Android TV beta11
+        run: |
+          curl -fLsS --retry 3 --retry-delay 3 --max-time 90 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/android-1.2.0-beta11/CactusTV-Android-TV-1.2.0-beta11.apk" -o AndroidTV.apk
+          echo "cb98722a4274d0837229582ec076ec217cae2f149146446b568cde1dc38832f8  AndroidTV.apk" | sha256sum -c -
+      - name: Inventariar recursos de canales sin exponer enlaces privados
+        run: |
+          python3 - <<'PY'
+          import zipfile,hashlib,re,json
+          with zipfile.ZipFile('AndroidTV.apk') as z:
+            print('APK OK?',z.testzip(),'entries',len(z.namelist()))
+            names=z.namelist()
+            print('CHANNEL PATHS',[n for n in names if re.search('live|channel|wepa|sport|playlist|m3u',n,re.I)][:120])
+            files=[n for n in names if n.endswith(('.js','.json','.m3u','.txt')) and not n.startswith('res/') and not re.search('vendor|node_modules|META-INF',n,re.I)]
+            print('CANDIDATES',[(n,z.getinfo(n).file_size) for n in files[:90]])
+            for n in files:
+              if re.search('live-catalog.js|wepa-catalog.json|sports-extras.json|live-view.js',n,re.I):
+                data=z.read(n)
+                print('IMPORTANT',n,len(data),hashlib.sha256(data).hexdigest())
+                if n.endswith('wepa-catalog.json'):
+                  j=json.loads(data)
+                  print('WEPA_ROWS',len(j.get('channels',[])))
+          PY
