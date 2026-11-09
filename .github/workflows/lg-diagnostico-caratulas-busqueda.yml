@@ -1,0 +1,62 @@
+name: Diagnosticar regresion LG poster y busqueda TV 224 225
+on:
+  push:
+    paths: [".github/workflows/lg-diagnostico-caratulas-busqueda.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar betas LG anteriores y nuevas
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o lg212.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  lg212.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-standard-2.0.24-canales-beta/CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk" -o lg224.ipk
+          echo "4aaa58f2b24ac8f587ae6b252e5bce04094b9a0725d769f89a645ac02ddce8da  lg224.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-webos6-2.0.25-canales-ligero-beta/CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk" -o lg225.ipk
+          echo "894827d8af2464a5e65f4434f444556e7d5e90104c6f79db1075f7801b29ed57  lg225.ipk" | sha256sum -c -
+      - name: Señalar diferencias de carátulas y búsquedas
+        run: |
+          python3 - <<'PY'
+          import tarfile,io,pathlib,re,difflib
+          def files(path):
+            b=pathlib.Path(path).read_bytes();i=8
+            while i<len(b):
+              h=b[i:i+60];s=int(h[48:58]);name=h[:16].decode().strip().rstrip('/');data=b[i+60:i+60+s];i+=60+s+s%2
+              if name=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as z:
+              return {m.name.split('/')[-1]:z.extractfile(m).read().decode('utf8','replace') for m in z if m.isfile() and m.name.endswith(('.js','.css','.html'))}
+          old=files('lg212.ipk');a=files('lg224.ipk');b=files('lg225.ipk')
+          def redact(s):
+            s=re.sub(r'https?://[^\s"\\x27<>]+','[URL]',s)
+            s=re.sub(r'(?i)(password|secret|token|apikey|authorization)["\\x27]?\s*[:=]\s*["\\x27][^"\\x27]+','[REDACTED]',s)
+            return s
+          for f in ['direct-api.js','poster-images.js','main.js','live-view.js','cactus-wepa.js','browse-shelves.js','settings.js','lite-catalog.js']:
+            print('\n===',f,'VERSIONS',('OLD' if f in old else ''),('224' if f in a else ''),('225' if f in b else ''),'===')
+            if f in old and f in a:
+              print('OLD',len(old[f]),'224',len(a[f]),'SAME?',old[f]==a[f],'225SAME224?',a[f]==b.get(f))
+            if f=='direct-api.js':
+              for name,code in [('OLD',old[f]),('224',a[f])]:
+                print(name,'FUNCTIONS: ')
+                for token in ['function image(v)','function imagePath(','function artwork(','function withCatalogueArtwork(','function supplementArtwork(','function remember(','function poster(','function hydrate(']:
+                  pos=code.find(token)
+                  if pos>=0:print(token,redact(code[pos:pos+690]).replace('\n',' ')[:690])
+              lines=list(difflib.unified_diff(old[f].splitlines(),a[f].splitlines(),n=0))
+              print('DIFF FILTERED: ')
+              for line in lines:
+                if any(y in line for y in ['poster','artwork','image','withCatalogue','supplement','remember','hydrate','__cactus__']):
+                  print(redact(line[:490]))
+            if f in ('main.js','browse-shelves.js','poster-images.js'):
+              for name,code in [('OLD',old.get(f,'')),('224',a.get(f,'')),('225',b.get(f,''))]:
+                for token in ['function posterFor(','function fill(','window.CACTUS_IMAGES={','document.addEventListener(\\'cactussettingschange\\'','function render(){']:
+                  pos=code.find(token)
+                  if pos>=0:print(name,token,redact(code[pos:pos+620]).replace('\n',' ')[:620])
+            if f=='live-view.js':
+              for name,code in [('OLD',old[f]),('224',a[f]),('225',b[f])]:
+                for token in ['function search(','search:function(value,done)','function loadPage(','function renderChannels(','function preview(','function requestPreview(','function selectCategory(','function savedKey()','function warmPreview(']:
+                  pos=code.find(token)
+                  if pos>=0:print(name,token,redact(code[pos:pos+1150]).replace('\n',' ')[:1150])
+            if f in ('settings.js','lite-catalog.js'):
+              print('225 MODULE FIRST',redact(b.get(f,'')[:3000]))
+          PY
