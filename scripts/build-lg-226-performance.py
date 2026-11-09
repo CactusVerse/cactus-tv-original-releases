@@ -61,8 +61,9 @@ def patch_live(s):
     #    enfocar o cambiar canal. La selección, reproducción y el mando siguen igual.
     a,b,preview=segment(s," function preview("," function requestPreview(")
     assert "renderChannels();" in preview,preview[:1500]
-    preview=replace_one(preview,"current=item;connection='connecting';",
-                        "var previousId=current&&current.id;current=item;connection='connecting';","preview.current")
+    brace=preview.find('{')
+    if brace<0:raise RuntimeError("preview sin cuerpo")
+    preview=preview[:brace+1]+"var previousId=current&&current.id;"+preview[brace+1:]
     preview=replace_one(preview,"renderChannels();","updateChannelSelection(previousId,item.id);","preview.no-redraw")
     s=s[:a]+preview+s[b:]
     # 4. Al cargar la siguiente página, no reconstruir todos los canales previos.
