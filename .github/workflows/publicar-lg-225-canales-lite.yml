@@ -1,0 +1,73 @@
+name: Publicar LG webOS6 2.0.25 - Canales y modo ligero
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-225-canales-lite.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar LG 2.0.24 ya verificada
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-standard-2.0.24-canales-beta/CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk" -o lg224.ipk
+          echo "4aaa58f2b24ac8f587ae6b252e5bce04094b9a0725d769f89a645ac02ddce8da  lg224.ipk" | sha256sum -c -
+      - name: Construir webOS6 con catálogo ligero y reintento inicial
+        run: |
+          python3 scripts/build-lg-webos6-225-channels-lite.py
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk
+          sha256sum CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk > SHA256SUMS-LG-225.txt
+      - name: Verificar que el reproductor y las fuentes sean idénticos a LG 2.0.24
+        run: |
+          python3 - <<'PY'
+          import tarfile,io,pathlib,json,subprocess
+          def get(p):
+              b=pathlib.Path(p).read_bytes();i=8
+              while i<len(b):
+                  h=b[i:i+60];name=h[:16].decode().strip().rstrip('/')
+                  n=int(h[48:58]);x=b[i+60:i+60+n];i+=60+n+n%2
+                  if name=='data.tar.gz':break
+              with tarfile.open(fileobj=io.BytesIO(x),mode='r:gz') as f:
+                  return {m.name.lstrip('./'):f.extractfile(m).read() for m in f if m.isfile()}
+          before=get('lg224.ipk');after=get('CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk')
+          assert len(after)==len(before)+1
+          changed=sorted(n.split('/')[-1] for n in before if before[n]!=after[n])
+          expected=['appinfo.json','browse-shelves.js','index.html','lg-tv-enhancements.css','live-view.js','main.js','packageinfo.json','services.json','settings.js']
+          assert changed==expected,(changed,expected)
+          for n in ['server.js','launcher.js','service.js','media-engine.js','playback-controls.js','direct-api.js','cactus-wepa.js','wepa-catalog.json','sports-extras.json','provider-worker.js']:
+              a=next((v for k,v in before.items() if k.endswith('/'+n)),None)
+              b=next((v for k,v in after.items() if k.endswith('/'+n)),None)
+              assert a is not None and a==b,n
+          for n in ['lite-catalog.js','live-view.js','main.js','settings.js','browse-shelves.js']:
+              src=next(v for k,v in after.items() if k.endswith('/'+n))
+              subprocess.run(['node','--check','-'],input=src,check=True)
+              print('JS_OK',n)
+          html=next(v for k,v in after.items() if k.endswith('/backend/app/index.html'))
+          assert html.count(b'lite-catalog.js')==1
+          assert html.index(b'cactus-wepa.js')<html.index(b'live-view.js')
+          assert b'cactus-titles-only' in next(v for k,v in after.items() if k.endswith('/lg-tv-enhancements.css'))
+          assert b'Carátulas del catálogo' in next(v for k,v in after.items() if k.endswith('/settings.js'))
+          assert b'lgRetryTimer' in next(v for k,v in after.items() if k.endswith('/live-view.js'))
+          print('PASS: video intacto, 1748 canales conservados, modo ligero y reintento agregado')
+          PY
+      - name: Publicar beta webOS 6 sin cambiar descarga oficial
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-webos6-2.0.25-canales-ligero-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk SHA256SUMS-LG-225.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk SHA256SUMS-LG-225.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG webOS6 2.0.25 - Canales y modo ligero" \
+              --notes "Beta experimental para LG 32UP7500 webOS 6: incorpora las nuevas categorías de TV en vivo desde Samsung 049, Wepa paginado con 1748 registros y deportes adicionales. Mantiene motor multimedia webOS y la corrección de «Volver» en pantalla completa. Incluye modo opcional Solo títulos que evita solicitudes de imágenes en las listas, y una espera/reintento al comenzar a reproducir el primer canal. No instalada ni probada aún en LG real. No modifica la descarga pública." \
+              --prerelease --latest=false
+          fi
