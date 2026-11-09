@@ -1,0 +1,37 @@
+name: Examinar causas caratulas LG y buscador en vivo
+on:
+  push:
+    paths: [".github/workflows/examinar-lg-regresiones-2.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fLsS --retry 4 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o old.ipk
+          curl -fLsS --retry 4 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-webos6-2.0.25-canales-ligero-beta/CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk" -o new.ipk
+          python3 - <<'PY'
+          import io,tarfile,pathlib,re
+          def files(p):
+            b=pathlib.Path(p).read_bytes();i=8
+            while i<len(b):
+              h=b[i:i+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58]);v=b[i+60:i+60+sz];i+=60+sz+sz%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(v),mode='r:gz') as t:return {m.name.split('/backend/app/')[-1]:t.extractfile(m).read().decode('utf8','replace') for m in t if m.isfile()}
+          old,new=files('old.ipk'),files('new.ipk')
+          for ver,fs in [('OLD',old),('NEW',new)]:
+            print('======== VERSION',ver,'========')
+            s=fs['direct-api.js']
+            for a,b in [('function withCatalogueArtwork','function remember('),('function supplementArtwork','function remember('),('function remember(','function storage('),('function record(','function episode(')]:
+              st=s.find(a)
+              if st<0:continue
+              end=s.find(b,st+5)
+              print('DIRECT API',a,re.sub(r'https?://[^\s"\\x27]+','[URL]',s[st:(end if end>st else st+2200)][:4500]))
+            print('POSTER MODULE TAIL',fs['poster-images.js'][-1200:])
+            s=fs['live-view.js']
+            print('LIVE TAIL',s[-6000:])
+            for needle in ['search.addEventListener','addEventListener(\\'input\\'','addEventListener("input"','search-focus','function applyExtraFilter','function loadPage']:
+              i=s.find(needle)
+              if i>=0:print('LIVE MATCH',needle,s[max(0,i-100):i+1450])
+          PY
