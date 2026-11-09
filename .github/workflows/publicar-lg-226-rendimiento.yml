@@ -1,4 +1,5 @@
 name: Publicar Cactus LG 2.0.26 - optimización navegación
+# Revalidar con las dos variantes del método preview() en LG
 on:
   push:
     paths:
