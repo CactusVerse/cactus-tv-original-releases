@@ -1,0 +1,51 @@
+name: Auditar dependencias LG nuevos canales Samsung 049
+on:
+  push:
+    paths: [".github/workflows/inspeccionar-lg-nuevos-canales.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  auditar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar WGT Samsung 049
+        run: |
+          curl -fLsS --retry 4 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/CactusTV_Samsung_049_LISTO_PARA_PUBLICAR/CactusTV_Samsung_65_DiagnosticoCaratulas_049.wgt" -o samsung049.wgt
+          echo "69052b4d1a26449f7af62d501be630fb7f57a5395b813f3bd939f7dfa887cacc  samsung049.wgt" | sha256sum -c -
+      - name: Comparar canales y módulos en detalle sin exponer direcciones de reproducción
+        run: |
+          python3 - <<'PY'
+          import zipfile,re,io,json,hashlib
+          with zipfile.ZipFile('samsung049.wgt') as z:
+            def txt(n):return z.read(n).decode('utf8','replace')
+            html=txt('index.html')
+            print("INDEX CHANNEL HTML AREAS")
+            for marker in ('id="live-workspace"','id="live-preview-viewport"','id="live-channel-list"','id="live-category-list"','live-catalog.js','cactus-wepa.js','cactus-sports-connect.js','cactus-web-sports.js','cactus-sports','cactus-adult-pin.js'):
+              i=html.find(marker)
+              print(marker,i,'snippet:',html[max(0,i-130):i+220].replace('\n',' ')[:350])
+            print("=== MODULE LOAD ORDER ===")
+            print('\n'.join(re.findall(r'<script[^>]*\bsrc=["\\x27]([^"\\x27]+)',html)))
+            print('=== CSS LOAD ===')
+            print(re.findall(r'<link[^>]*\bhref=["\\x27]([^"\\x27]+)',html))
+            for name in ['sports-extras.json','wepa-catalog.json']:
+              dat=json.loads(txt(name))
+              print("=== DATA",name,"===")
+              print("Root type",type(dat).__name__,"root keys",list(dat)[:20] if isinstance(dat,dict) else "array","size",len(dat))
+              if isinstance(dat,dict):
+                for key,val in dat.items():
+                  print('Key',key,'type',type(val).__name__,'items',len(val) if hasattr(val,'__len__') else '')
+                  if isinstance(val,list) and val:
+                    x=val[0]
+                    if isinstance(x,dict):print('First item keys',sorted(x.keys()))
+              elif isinstance(dat,list) and dat:
+                print('First item keys',sorted(dat[0].keys()) if isinstance(dat[0],dict) else 'no keys')
+            for name in ['cactus-wepa.js','cactus-sports-connect.js','cactus-web-sports.js','live-view.js']:
+              src=txt(name)
+              print("=== JS",name,"===")
+              for m in re.finditer(r'window\.(CACTUS_[A-Z_]+)',src):
+                print("PUBLIC",m.group(1))
+              for token in ['function open(','function setExtras(','function sportsFirst(','function loadPage(','function preview(','function selectCategory(','function renderCategories(','function renderChannels(']:
+                i=src.find(token)
+                if i>=0:print(token,re.sub(r'https?://[^\s"\\x27]+','[URL]',src[i:i+330].replace('\n',' ')))
+              print('bytes',len(src))
+          PY
