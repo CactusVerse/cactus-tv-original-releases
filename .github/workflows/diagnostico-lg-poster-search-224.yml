@@ -1,0 +1,60 @@
+name: Diagnostico LG poster y busqueda en 2.0.24
+on:
+  push:
+    paths: [".github/workflows/diagnostico-lg-poster-search-224.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  analisis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obtener LG beta 2.0.24 y base 2.0.12
+        run: |
+          curl -fLsS --retry 4 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-standard-2.0.24-canales-beta/CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk" -o lg224.ipk
+          echo "4aaa58f2b24ac8f587ae6b252e5bce04094b9a0725d769f89a645ac02ddce8da  lg224.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o lg212.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  lg212.ipk" | sha256sum -c -
+      - name: Analizar funciones y controles requeridos sin revelar URL ni tokens
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,re,difflib,hashlib,json
+          def read(p):
+            raw=pathlib.Path(p).read_bytes();pos=8
+            while pos<len(raw):
+              h=raw[pos:pos+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58])
+              b=raw[pos+60:pos+60+sz];pos+=60+sz+sz%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(b),mode='r:gz') as t:
+              return {m.name.split('/backend/app/')[-1]:t.extractfile(m).read().decode('utf8','replace') for m in t if m.isfile() and '/backend/app/' in m.name and m.name.endswith(('.js','.html','.css'))}
+          prev=read('lg212.ipk');new=read('lg224.ipk')
+          html=new['index.html']
+          ids=set(re.findall(r'id="([^"]+)"',html))
+          for name in ['live-view.js','direct-api.js','provider-worker.js','providers.js','poster-images.js','browse-shelves.js','main.js','settings.js']:
+            code=new[name];old=prev[name]
+            print('\n---',name,'PREV',len(old),'NEW',len(code),'DIFF',code!=old)
+            if name=='live-view.js':
+              want=set(re.findall(r'\bel\([\\x27"]([^\\x27"]+)',code))
+              print('MISSING ELEMENT IDs',sorted(want-ids))
+              for pat in ['search.addEventListener','el(\\x27search\\x27).addEventListener','el(\\x27live-search\\x27).addEventListener','function queryLive','function applyExtraFilter','function search','function onSearch','function loadPage','function selectCategory','function renderChannels','function preview','function filter']:
+                for m in list(re.finditer(re.escape(pat),code))[:3]:
+                  print('PREVIEW',pat,re.sub(r'https?://[^\\s"\\x27]+','[URL]',code[max(0,m.start()-110):m.start()+850]).replace('\n',' ')[:950])
+              print('ALL ID REFERENCES',sorted(want))
+            elif name=='direct-api.js':
+              for pat in ['function imagePath','function artwork','function supplementArtwork','function remember','function normalized','function poster','function sportsExtras','function hydrate']:
+                for m in list(re.finditer(re.escape(pat),code))[:1]:
+                  print('NEWFUNC',pat,re.sub(r'https?://[^\\s"\\x27]+','[URL]',code[m.start():m.start()+1300]).replace('\n',' ')[:1400])
+                  if pat in old:
+                    m2=old.find(pat);print('OLDFUNC',pat,re.sub(r'https?://[^\\s"\\x27]+','[URL]',old[m2:m2+650]).replace('\n',' ')[:750])
+              print('export marker',code[-1100:])
+            elif name=='provider-worker.js':
+              for key in ['function poster','function artwork','posterUrl','posterList','imagePath','proxy','ready','catalogLoaded']:
+                print('PROVIDER TOKEN',key,'OLD',old.count(key),'NEW',code.count(key))
+            elif name=='main.js':
+              for pat in ["search.addEventListener('input'",'function posterFor','function renderGrid','function renderCard','function fill']:
+                i=code.find(pat)
+                if i>=0:print('MAIN',pat,re.sub(r'https?://[^\\s"\\x27]+','[URL]',code[i:i+800]).replace('\n',' '))
+            elif name=='poster-images.js':
+              for key in ['function attach','function safe','function paint','function image','function schedule','onerror']:
+                i=code.find(key)
+                if i>=0: print('POSTER',key,code[i:i+700].replace('\n',' '))
+          PY
