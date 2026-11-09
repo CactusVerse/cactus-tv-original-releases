@@ -64,7 +64,9 @@ def patch_live(s):
     brace=preview.find('{')
     if brace<0:raise RuntimeError("preview sin cuerpo")
     preview=preview[:brace+1]+"var previousId=current&&current.id;"+preview[brace+1:]
-    preview=replace_one(preview,"renderChannels();","updateChannelSelection(previousId,item.id);","preview.no-redraw")
+    redraws=preview.count("renderChannels();")
+    if redraws<1 or redraws>4:raise RuntimeError("preview redibujos inesperados: %d"%redraws)
+    preview=preview.replace("renderChannels();","updateChannelSelection(previousId,item.id);")
     s=s[:a]+preview+s[b:]
     # 4. Al cargar la siguiente página, no reconstruir todos los canales previos.
     a,b,load=segment(s," function loadPage("," function selectCategory(")
