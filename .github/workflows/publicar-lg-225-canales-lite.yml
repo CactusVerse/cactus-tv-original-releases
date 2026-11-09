@@ -52,7 +52,7 @@ jobs:
           assert html.count(b'lite-catalog.js')==1
           assert html.index(b'cactus-wepa.js')<html.index(b'live-view.js')
           assert b'cactus-titles-only' in next(v for k,v in after.items() if k.endswith('/lg-tv-enhancements.css'))
-          assert b'Carátulas del catálogo' in next(v for k,v in after.items() if k.endswith('/settings.js'))
+          assert 'Carátulas del catálogo' in next(v for k,v in after.items() if k.endswith('/settings.js')).decode('utf8')
           assert b'lgRetryTimer' in next(v for k,v in after.items() if k.endswith('/live-view.js'))
           print('PASS: video intacto, 1748 canales conservados, modo ligero y reintento agregado')
           PY
