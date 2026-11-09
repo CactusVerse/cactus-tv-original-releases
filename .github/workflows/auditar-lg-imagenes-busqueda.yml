@@ -1,0 +1,69 @@
+name: Auditar regresiones de caratulas y busqueda LG 2.0.24 2.0.25
+on:
+  push:
+    paths: [".github/workflows/auditar-lg-imagenes-busqueda.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  auditar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar IPK base y beta con SHA
+        run: |
+          curl -fLsS --retry 3 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o lg212.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  lg212.ipk" | sha256sum -c -
+          curl -fLsS --retry 3 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-standard-2.0.24-canales-beta/CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk" -o lg224.ipk
+          echo "4aaa58f2b24ac8f587ae6b252e5bce04094b9a0725d769f89a645ac02ddce8da  lg224.ipk" | sha256sum -c -
+          curl -fLsS --retry 3 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-webos6-2.0.25-canales-ligero-beta/CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk" -o lg225.ipk
+          echo "894827d8af2464a5e65f4434f444556e7d5e90104c6f79db1075f7801b29ed57  lg225.ipk" | sha256sum -c -
+      - name: Auditar dependencias de caratulas y eventos de busqueda
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,hashlib,pathlib,re,difflib
+          def files(path):
+            b=pathlib.Path(path).read_bytes();p=8
+            while p<len(b):
+              h=b[p:p+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58]);data=b[p+60:p+60+sz];p+=60+sz+sz%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as t:
+              return {m.name.split('/backend/app/')[-1]:t.extractfile(m).read().decode('utf8','replace') for m in t if m.isfile() and '/backend/app/' in m.name and m.name.endswith(('.js','.css','.html'))}
+          catalog={key:files(key+'.ipk') for key in ['lg212','lg224','lg225']}
+          snippets={
+            'direct-api.js':['function image(','function imagePath(','function remember(','function artwork(','function poster(','function normalize(','function normalized(','function categories(','function shelf(','function live(','function search('],
+            'poster-images.js':['function attach(','function release(','CACTUS_IMAGES','function best(','function image','function load('],
+            'browse-shelves.js':['function fill(','function render(','function card(','function row(','function createCard(','function poster('],
+            'main.js':['function render(','function card(','function renderContinue(','CACTUS_IMAGES','CACTUS_LIGHT'],
+            'live-view.js':['function open(','function preview(','function loadPage(','function selectCategory(','function renderChannels(','function applyExtraFilter(','function setExtras(','addEventListener','search.addEventListener','search.addEventListener'],
+            'settings.js':['var options=','key:\x27artwork\x27','function get(','function save(','cactussettingschange'],
+            'lite-catalog.js':['function titles()','function sync()','var images=w.CACTUS_IMAGES'],
+            'live-catalog.js':['function search(','CACTUS_LIVE']
+          }
+          for filename,tokens in snippets.items():
+            print('\n=======FILE',filename,'=======')
+            for ver in ['lg212','lg224','lg225']:
+              code=catalog[ver].get(filename,'')
+              if not code:continue
+              print('VERSION',ver,'SIZE',len(code),'SHA',hashlib.sha256(code.encode()).hexdigest())
+              for token in tokens:
+                i=code.find(token)
+                if i>=0:
+                  txt=code[max(0,i-130):i+1150]
+                  # only code, no URLs / authorization parameters
+                  txt=re.sub(r'https?://[^\s"\\x27]+','[URL]',txt)
+                  print('BLOCK',token,repr(txt[:1270]))
+          print('\n======= FOCUSED DIFF 212-224 =======')
+          for name in ['direct-api.js','live-view.js']:
+            a=catalog['lg212'][name].splitlines();b=catalog['lg224'][name].splitlines()
+            for x in list(difflib.unified_diff(a,b,n=1))[:95]:
+              x=re.sub(r'https?://[^\s"\\x27]+','[URL]',x)
+              print('DIFF',x[:440])
+          print('\n======= FOCUSED DIFF 224-225 =======')
+          for name in ['main.js','settings.js','browse-shelves.js','live-view.js']:
+            a=catalog['lg224'][name].splitlines();b=catalog['lg225'][name].splitlines()
+            for x in list(difflib.unified_diff(a,b,n=1))[:48]:
+              x=re.sub(r'https?://[^\s"\\x27]+','[URL]',x)
+              print('DIFF',x[:440])
+          PY
