@@ -49,7 +49,7 @@ jobs:
                   print(redact(line[:490]))
             if f in ('main.js','browse-shelves.js','poster-images.js'):
               for name,code in [('OLD',old.get(f,'')),('224',a.get(f,'')),('225',b.get(f,''))]:
-                for token in ['function posterFor(','function fill(','window.CACTUS_IMAGES={','document.addEventListener(\\'cactussettingschange\\'','function render(){']:
+                for token in ['function posterFor(','function fill(','window.CACTUS_IMAGES={','cactussettingschange','function render(){']:
                   pos=code.find(token)
                   if pos>=0:print(name,token,redact(code[pos:pos+620]).replace('\n',' ')[:620])
             if f=='live-view.js':
