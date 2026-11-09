@@ -1,0 +1,43 @@
+name: Cactus LG - Comparar canales Samsung Windows Android
+on:
+  push:
+    paths:
+      - ".github/workflows/analizar-fuentes-lg-canales.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  analizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar compilaciones oficiales y verificar huellas
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/CactusTV_Samsung_049_LISTO_PARA_PUBLICAR/CactusTV_Samsung_65_DiagnosticoCaratulas_049.wgt" -o Samsung049.wgt
+          echo "69052b4d1a26449f7af62d501be630fb7f57a5395b813f3bd939f7dfa887cacc  Samsung049.wgt" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/windows-desierto-r9-v1.2.20/CactusTV-Windows-Desierto-R9-v1.2.20-Portable.zip" -o Windows120.zip
+          echo "a797061698c3febeb21ff95a23645371939d3ea0b48c8c6be8e08af2f2ed4f8d  Windows120.zip" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/android-1.2.0-beta11/CactusTV-Android-TV-1.2.0-beta11.apk" -o Android120.apk
+          echo "cb98722a4274d0837229582ec076ec217cae2f149146446b568cde1dc38832f8  Android120.apk" | sha256sum -c -
+      - name: Examinar estructura de listas sin exponer credenciales ni enlaces
+        run: |
+          python3 - <<'PY'
+          import zipfile,hashlib,re,json,os
+          for name in ['Samsung049.wgt','Windows120.zip','Android120.apk']:
+            print('\n===',name,'===')
+            with zipfile.ZipFile(name) as z:
+              print('Zip items',len(z.namelist()),'bad',z.testzip())
+              files=z.namelist()
+              print('files in top:',[p for p in files if p.count('/')<2][:75])
+              hits=[p for p in files if re.search(r'live.?catalog|live.?view|playlist|channels?|iptv|live.?tv|catalog.?bootstrap|\.asar$',p,re.I)]
+              print('Channel candidates:',[(p,z.getinfo(p).file_size) for p in hits[:60]])
+              js=[p for p in files if p.lower().endswith(('.js','.json','.html')) and z.getinfo(p).file_size<3_000_000 and not re.search(r'vendor|node_modules|bundle|assets/index-',p)]
+              for p in js:
+                if re.search(r'live-catalog\.js$|live-view\.js$|live\.js$|catalog-bootstrap\.json$|runtime-config\.js$',p):
+                  b=z.read(p)
+                  print('SOURCE',p,'BYTES',len(b),'SHA256',hashlib.sha256(b).hexdigest(),'channelRecordCount',len(re.findall(rb'"id":\s*"wiwy-',b)))
+              if name.startswith('Android'):
+                print('Asset tree sample:',[p for p in files if 'assets/' in p][:60])
+          PY
