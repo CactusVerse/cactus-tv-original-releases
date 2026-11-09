@@ -16,16 +16,13 @@ jobs:
             "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/CactusTV_Samsung_049_LISTO_PARA_PUBLICAR/CactusTV_Samsung_65_DiagnosticoCaratulas_049.wgt" -o Samsung049.wgt
           echo "69052b4d1a26449f7af62d501be630fb7f57a5395b813f3bd939f7dfa887cacc  Samsung049.wgt" | sha256sum -c -
           curl -fLsS --retry 4 --retry-delay 2 \
-            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/windows-desierto-r9-v1.2.20/CactusTV-Windows-Desierto-R9-v1.2.20-Portable.zip" -o Windows120.zip
-          echo "a797061698c3febeb21ff95a23645371939d3ea0b48c8c6be8e08af2f2ed4f8d  Windows120.zip" | sha256sum -c -
-          curl -fLsS --retry 4 --retry-delay 2 \
-            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/android-1.2.0-beta11/CactusTV-Android-TV-1.2.0-beta11.apk" -o Android120.apk
-          echo "cb98722a4274d0837229582ec076ec217cae2f149146446b568cde1dc38832f8  Android120.apk" | sha256sum -c -
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/samsung-wgt-r9-2026-11-05/CactusTV_Samsung_R9.wgt" -o SamsungR9.wgt
+          echo "a9c13baf0dbc376b9e7564d9dbb6703d894518f69d23340a2d6e559a83aae22a  SamsungR9.wgt" | sha256sum -c -
       - name: Examinar estructura de listas sin exponer credenciales ni enlaces
         run: |
           python3 - <<'PY'
           import zipfile,hashlib,re,json,os
-          for name in ['Samsung049.wgt','Windows120.zip','Android120.apk']:
+          for name in ['Samsung049.wgt','SamsungR9.wgt']:
             print('\n===',name,'===')
             with zipfile.ZipFile(name) as z:
               print('Zip items',len(z.namelist()),'bad',z.testzip())
@@ -40,4 +37,24 @@ jobs:
                   print('SOURCE',p,'BYTES',len(b),'SHA256',hashlib.sha256(b).hexdigest(),'channelRecordCount',len(re.findall(rb'"id":\s*"wiwy-',b)))
               if name.startswith('Android'):
                 print('Asset tree sample:',[p for p in files if 'assets/' in p][:60])
+          PY
+          python3 - <<'PY'
+          import zipfile,hashlib,re,difflib
+          with zipfile.ZipFile('Samsung049.wgt') as fresh,zipfile.ZipFile('SamsungR9.wgt') as old:
+            allfiles=sorted(set(fresh.namelist())|set(old.namelist()))
+            changed=[]
+            for p in allfiles:
+              if p not in old.namelist() or p not in fresh.namelist() or fresh.read(p)!=old.read(p):
+                changed.append((p,len(fresh.read(p)) if p in fresh.namelist() else 0,len(old.read(p)) if p in old.namelist() else 0))
+            print('=== CHANGED SAMSUNG R9->049 ===',len(changed))
+            for p,a,b in changed:print('CHANGED',p,a,b)
+            for p in ['live-catalog.js','live-view.js','direct-api.js','api-client.js','catalog-bootstrap.json','catalog-start.json','runtime-config.js','xuper/live.js','xuper/catalog.js','xuper/config.js','provider-worker.js']:
+              if p not in fresh.namelist() or p not in old.namelist():continue
+              a=fresh.read(p);b=old.read(p)
+              print('TARGET',p,'SAME?',a==b,'FRESH',len(a),'OLD',len(b))
+              if p in ('live-view.js','direct-api.js') and a!=b:
+                for line in list(difflib.unified_diff(b.decode('utf8','replace').splitlines(),a.decode('utf8','replace').splitlines(),n=1))[:60]:
+                  # Hide URLs / literal credentials.
+                  line=re.sub(r'https?://[^\s"\\x27]+','[REDACTED]',line)
+                  print('DIFF',line[:220])
           PY
