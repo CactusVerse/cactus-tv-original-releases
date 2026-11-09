@@ -1,0 +1,140 @@
+name: Publicar Cactus LG 2.0.26 - optimización navegación
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-226-rendimiento.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar betas de LG con canales ya añadidos
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-standard-2.0.24-canales-beta/CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk" \
+            -o LG_standard_2.0.24.ipk
+          echo "4aaa58f2b24ac8f587ae6b252e5bce04094b9a0725d769f89a645ac02ddce8da  LG_standard_2.0.24.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-webos6-2.0.25-canales-ligero-beta/CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk" \
+            -o LG_webOS6_2.0.25.ipk
+          echo "894827d8af2464a5e65f4434f444556e7d5e90104c6f79db1075f7801b29ed57  LG_webOS6_2.0.25.ipk" | sha256sum -c -
+      - name: Generar dos betas de navegación optimizada
+        run: |
+          python3 scripts/build-lg-226-performance.py LG_standard_2.0.24.ipk CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk
+          python3 scripts/build-lg-226-performance.py LG_webOS6_2.0.25.ipk CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk
+          dpkg-deb --info CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk
+          sha256sum CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk > SHA256SUMS-LG-226.txt
+      - name: Validar sintaxis, modificaciones acotadas y estructura de IPK
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,json,pathlib,subprocess
+          def datafiles(filename):
+            b=pathlib.Path(filename).read_bytes();i=8
+            while i<len(b):
+              h=b[i:i+60];size=int(h[48:58]);n=h[:16].decode().strip().rstrip('/')
+              chunk=b[i+60:i+60+size];i+=60+size+size%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(chunk),mode='r:gz') as t:
+              return {m.name.lstrip('./'):t.extractfile(m).read() for m in t if m.isfile()}
+          builds=[
+            ("LG_standard_2.0.24.ipk","CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk"),
+            ("LG_webOS6_2.0.25.ipk","CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk")]
+          expected={'live-view.js','cactus-wepa.js','poster-images.js','browse-shelves.js','main.js',
+                    'appinfo.json','services.json','packageinfo.json'}
+          for before,after in builds:
+            old=datafiles(before);new=datafiles(after)
+            assert old.keys()==new.keys(),("Unexpected file changes",before)
+            changed={p.rsplit('/',1)[-1] for p in old if old[p]!=new[p]}
+            assert changed==expected,(after,changed,expected)
+            for n in ['live-view.js','cactus-wepa.js','poster-images.js','browse-shelves.js','main.js']:
+              code=next(v for k,v in new.items() if k.endswith('/'+n))
+              subprocess.run(['node','--check','-'],input=code,check=True)
+              print("JS_OK",after,n)
+            live=next(v.decode() for k,v in new.items() if k.endswith('/live-view.js'))
+            preview=live[live.index(' function preview('):live.index(' function requestPreview(')]
+            assert 'renderChannels();' not in preview
+            assert 'updateChannelSelection(previousId,item.id)' in preview
+            assert 'renderChannels(next===1?0:old)' in live
+            assert 'channelCache[String(id)]' in live
+            assert 'createDocumentFragment' in live
+            wepa=next(v.decode() for k,v in new.items() if k.endswith('/cactus-wepa.js'))
+            assert "g==='all'?allVisible:(byKind[g]||[])" in wepa
+            meta=json.loads(next(v for k,v in new.items() if k.endswith('/appinfo.json')))
+            assert meta['version']=='2.0.26'
+            catalog=next(v for k,v in new.items() if k.endswith('/wepa-catalog.json'))
+            assert len(json.loads(catalog)['channels'])==1748
+            for name in ['media-engine.js','playback-controls.js','direct-api.js','server.js',
+                         'launcher.js','xuper/crypto3des.js','xuper/device.js','sports-extras.json',
+                         'wepa-catalog.json','catalog-bootstrap.json','lite-catalog.js','lg-tv-enhancements.css']:
+              a=next((v for k,v in old.items() if k.endswith('/'+name)),None)
+              b=next((v for k,v in new.items() if k.endswith('/'+name)),None)
+              assert a==b,(after,name)
+            print("PASS:",after,'source files',len(new),'modified',len(changed))
+          PY
+      - name: Prueba del índice de canales y paginación en JavaScript
+        run: |
+          python3 - <<'PY'
+          import tarfile,io,pathlib
+          b=pathlib.Path('CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk').read_bytes();p=8
+          while p<len(b):
+            h=b[p:p+60];n=h[:16].decode().strip().rstrip('/');size=int(h[48:58])
+            x=b[p+60:p+60+size];p+=60+size+size%2
+            if n=='data.tar.gz':break
+          with tarfile.open(fileobj=io.BytesIO(x),mode='r:gz') as t:
+            for m in t:
+              if m.name.endswith('/cactus-wepa.js'):pathlib.Path('wepa.js').write_bytes(t.extractfile(m).read())
+              if m.name.endswith('/wepa-catalog.json'):pathlib.Path('wepa.json').write_bytes(t.extractfile(m).read())
+          PY
+          node <<'JS'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const payload=fs.readFileSync('wepa.json','utf8');
+          const context={};
+          context.window=context;
+          context.XMLHttpRequest=function(){
+            this.open=function(){};
+            this.send=function(){this.responseText=payload;this.status=200;this.readyState=4;this.onreadystatechange();};
+          };
+          vm.runInNewContext(fs.readFileSync('wepa.js','utf8'),context);
+          const api=context.CACTUS_WEPA;
+          function page(group,number,query){
+            let result,failed;
+            api.getPage(group,number,query,(err,res)=>{failed=err;result=res;});
+            assert(!failed,failed&&failed.message);return result;
+          }
+          const all=page('all',1,''),next=page('all',2,''),sport=page('sports',1,'');
+          assert(all.total>100 && all.total<=1748);
+          assert.strictEqual(all.items.length,40);
+          assert.strictEqual(next.items.length,40);
+          assert.notStrictEqual(all.items[0].id,next.items[0].id);
+          assert(sport.total>=0&&sport.total<=all.total);
+          assert(all.items.every(item=>item.kind!=='adult'));
+          const key=all.items[0].title.split(/\s+/)[0].toLowerCase();
+          const filtered=page('all',1,key);
+          assert(filtered.items.every(item=>item.title.toLowerCase().includes(key)));
+          console.log('PASS: pagination, filter, categories, no adult content in all; total',all.total);
+          JS
+      - name: Publicar dos betas separadas de producción
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-2.0.26-rendimiento-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk \
+              CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk \
+              SHA256SUMS-LG-226.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk \
+              CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk \
+              SHA256SUMS-LG-226.txt --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG 2.0.26 beta - navegación optimizada" \
+              --notes "Betas para televisores LG: estándar basada en LG 2.0.24 y webOS 6 basada en LG 2.0.25 con Modo Solo títulos. Optimización: cambiar foco del canal sin reconstruir toda la lista, paginación incremental al pulsar Más canales, búsqueda pre-indexada en 1748 registros, menos comprobaciones de geometría y peticiones simultáneas de carátulas, menor retención de vistas y renderizado en lotes. Mantiene la lista de canales, lógica de reproducción, servicios, dependencias de medios, resolución, controles y ocultación del botón Volver. La mejora de fluidez NO está cuantificada ni confirmada en hardware real: probar antes de publicar en la web. No cambia LG Legacy webOS 3." \
+              --prerelease --latest=false
+          fi
