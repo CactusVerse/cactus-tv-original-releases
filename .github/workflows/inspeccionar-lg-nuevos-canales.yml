@@ -49,3 +49,19 @@ jobs:
                 if i>=0:print(token,re.sub(r'https?://[^\s"\\x27]+','[URL]',src[i:i+330].replace('\n',' ')))
               print('bytes',len(src))
           PY
+          python3 - <<'PY'
+          import zipfile,re
+          with zipfile.ZipFile('samsung049.wgt') as z:
+            for name in ['cactus-wepa.js','cactus-web-sports.js','cactus-sports-connect.js','live-view.js']:
+              b=z.read(name).decode('utf8','replace')
+              print('======= '+name+' BEGIN =======')
+              if name=='cactus-wepa.js':
+                print(re.sub(r'https?://[^\s"\\x27]+','[REDACTED]',b)[:5300])
+              if name=='live-view.js':
+                for ln in b.splitlines():
+                  if any(x in ln for x in ['function setExtras','function sportsFirst','function loadPage','function open','function selectCategory','function renderCategories']):
+                    print(re.sub(r'https?://[^\s"\\x27]+','[REDACTED]',ln[:2800]))
+              if name=='cactus-web-sports.js':print(re.sub(r'https?://[^\s"\\x27]+','[REDACTED]',b[:1100]))
+              if name=='cactus-sports-connect.js':print(re.sub(r'https?://[^\s"\\x27]+','[REDACTED]',b[:1100]))
+              print('======= '+name+' END =======')
+          PY
