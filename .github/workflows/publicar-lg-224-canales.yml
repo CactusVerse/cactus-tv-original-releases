@@ -1,0 +1,78 @@
+name: Publicar LG 2.0.24 beta con canales Samsung 049
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-224-canales.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar paquetes oficiales comprobados
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o lg-base.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  lg-base.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/CactusTV_Samsung_049_LISTO_PARA_PUBLICAR/CactusTV_Samsung_65_DiagnosticoCaratulas_049.wgt" -o samsung049.wgt
+          echo "69052b4d1a26449f7af62d501be630fb7f57a5395b813f3bd939f7dfa887cacc  samsung049.wgt" | sha256sum -c -
+      - name: Empaquetar adaptación nativa LG conservando motor de video y diseño
+        run: |
+          python3 scripts/build-lg-standard-224-channels.py
+          dpkg-deb --info CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk
+          sha256sum CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk > SHA256SUMS-LG-224.txt
+      - name: Pruebas de integridad, JavaScript y diferencias controladas
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,subprocess,zipfile,json,hashlib
+          def get(path):
+              b=pathlib.Path(path).read_bytes();p=8
+              while p<len(b):
+                  h=b[p:p+60];n=h[:16].decode().strip().rstrip('/');z=int(h[48:58])
+                  data=b[p+60:p+60+z];p+=60+z+z%2
+                  if n=='data.tar.gz':break
+              with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as t:
+                  return {m.name.lstrip('./'):t.extractfile(m).read() for m in t if m.isfile()}
+          old=get('lg-base.ipk');fresh=get('CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk')
+          assert len(fresh)==len(old)+3
+          changes=sorted(x.split('/')[-1] for x in old if old[x]!=fresh[x])
+          print('CHANGED',changes)
+          assert set(changes)=={'live-catalog.js','live-view.js','providers.js','provider-worker.js','direct-api.js',
+              'index.html','lg-tv-enhancements.css','appinfo.json','services.json','packageinfo.json'},changes
+          for name in ['server.js','launcher.js','service.js','media-engine.js','playback-controls.js','xuper/stream.js','xuper/device.js']:
+              oldvalue=next((v for k,v in old.items() if k.endswith('/'+name)),None)
+              newvalue=next((v for k,v in fresh.items() if k.endswith('/'+name)),None)
+              assert oldvalue==newvalue,(name,'regression')
+          scripts=['live-catalog.js','live-view.js','providers.js','provider-worker.js','direct-api.js','cactus-wepa.js']
+          for name in scripts:
+              src=next(v for k,v in fresh.items() if k.endswith('/'+name))
+              subprocess.run(['node','--check','-'],input=src,check=True)
+              print('JS_SYNTAX_OK',name)
+          html=next(v.decode() for k,v in fresh.items() if k.endswith('/backend/app/index.html'))
+          assert html.index('cactus-wepa.js')<html.index('live-view.js')
+          assert html.count('cactus-wepa.js')==1
+          assert 'lg-tv-enhancements.css' in html
+          wepa=json.loads(next(v for k,v in fresh.items() if k.endswith('/wepa-catalog.json')))
+          extras=json.loads(next(v for k,v in fresh.items() if k.endswith('/sports-extras.json')))
+          assert len(wepa['channels'])==1748 and len(extras['additional'])==10
+          print('CHECKS_OK',len(fresh),'files; channels',len(wepa['channels']),'extras',len(extras['additional']))
+          PY
+      - name: Publicar beta separada sin sustituir LG de producción
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-standard-2.0.24-canales-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk SHA256SUMS-LG-224.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk SHA256SUMS-LG-224.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG 2.0.24 Beta - categorías de canales Samsung 049" \
+              --notes "Beta exclusiva para pruebas. Port de las categorías y listas adicionales de la compilación Samsung 049: Cactus Deportes/Noticias/Cine TV/Series TV/Infantiles y 10 canales deportivos adicionales. El catálogo Wepa contiene 1748 registros, se presenta paginado de 40, sin carga masiva. Se conserva el motor de reproducción LG, video en HTML5, barra de retroceso con ocultación, arreglos de carátulas, servicio webOS y diseño. Las señales web sin URL de video nativa no se habilitan artificialmente. No se copian credenciales ni se instala VPN. NO probado aún en televisor LG real; no sustituye la descarga de la web. Los permisos y derechos de emisiones dependen de cada fuente." \
+              --prerelease --latest=false
+          fi
