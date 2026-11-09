@@ -1,0 +1,117 @@
+name: Comprobar y generar LG 2.0.26 - Posters y busqueda TV
+on:
+  push:
+    paths: [".github/workflows/lg-beta-226-posters-busqueda.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar fuentes verificadas
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o lg212.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  lg212.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-standard-2.0.24-canales-beta/CactusTV_LG_Standard_2.0.24_Canales_Beta.ipk" -o lg224.ipk
+          echo "4aaa58f2b24ac8f587ae6b252e5bce04094b9a0725d769f89a645ac02ddce8da  lg224.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-webos6-2.0.25-canales-ligero-beta/CactusTV_LG_webOS6_2.0.25_Canales_Ligero_Beta.ipk" -o lg225.ipk
+          echo "894827d8af2464a5e65f4434f444556e7d5e90104c6f79db1075f7801b29ed57  lg225.ipk" | sha256sum -c -
+      - name: Empaquetar betas con correcciones
+        run: |
+          python3 scripts/build-lg-226-poster-search-fix.py
+          dpkg-deb --info CactusTV_LG_Standard_2.0.26_Posters_Busqueda_Beta.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.26_Posters_Busqueda_Beta.ipk
+          sha256sum CactusTV_LG_Standard_2.0.26_Posters_Busqueda_Beta.ipk CactusTV_LG_webOS6_2.0.26_Posters_Busqueda_Beta.ipk > SHA256SUMS-LG-226.txt
+      - name: Comprobar integridad, regresiones y sintaxis
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,json,subprocess
+          pairs=[
+            ('lg224.ipk','CactusTV_LG_Standard_2.0.26_Posters_Busqueda_Beta.ipk',{'appinfo.json','direct-api.js','live-view.js','packageinfo.json','services.json'}),
+            ('lg225.ipk','CactusTV_LG_webOS6_2.0.26_Posters_Busqueda_Beta.ipk',{'appinfo.json','direct-api.js','live-view.js','packageinfo.json','services.json','lite-catalog.js','main.js','browse-shelves.js'})
+          ]
+          def files(path):
+            b=pathlib.Path(path).read_bytes();p=8
+            while p<len(b):
+              h=b[p:p+60];sz=int(h[48:58]);name=h[:16].decode().strip().rstrip('/')
+              raw=b[p+60:p+60+sz];p+=60+sz+sz%2
+              if name=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(raw),mode='r:gz') as z:
+              return {m.name.lstrip('./'):z.extractfile(m).read() for m in z if m.isfile()}
+          for old,new,expected in pairs:
+            before=files(old);after=files(new)
+            assert before.keys()==after.keys()
+            changed={k.split('/')[-1] for k in before if before[k]!=after[k]}
+            assert changed==expected,(old,changed,expected)
+            for path in after:
+              if path.endswith(('/live-view.js','/direct-api.js','/main.js','/browse-shelves.js','/lite-catalog.js')):
+                subprocess.run(['node','--check','-'],input=after[path],check=True)
+            for sensitive in ['media-engine.js','playback-controls.js','poster-images.js','webos-fetch.js',
+                              'cactus-wepa.js','wepa-catalog.json','sports-extras.json','provider-worker.js',
+                              'catalog-bootstrap.json','catalog-start.json','xuper/stream.js','xuper/device.js','settings.js']:
+              old_item=next((v for k,v in before.items() if k.endswith('/'+sensitive)),None)
+              new_item=next((v for k,v in after.items() if k.endswith('/'+sensitive)),None)
+              assert old_item==new_item,sensitive
+            api=next(v.decode() for k,v in after.items() if k.endswith('/direct-api.js'))
+            live=next(v.decode() for k,v in after.items() if k.endswith('/live-view.js'))
+            assert api.count('function withCatalogueArtwork(r,id)')==1
+            assert 'r=withCatalogueArtwork(r,id);' in api
+            assert 'if(cover)merged.poster=cover;' in api
+            assert 'if(wide)merged.wide=wide;' in api
+            assert "setTimeout(function(){if(!active)return;" in live
+            assert 'applyExtraFilter(false)' in live
+            assert 'if(next===1&&!query&&rows.length' in live
+            meta=json.loads(next(v for k,v in after.items() if k.endswith('/appinfo.json')))
+            assert meta['version']=='2.0.26'
+            assert meta['resolution']=='1920x1080'
+            print('PASS',new,'files',len(after),'modified',sorted(changed))
+          web=files('CactusTV_LG_webOS6_2.0.26_Posters_Busqueda_Beta.ipk')
+          lite=next(v.decode() for k,v in web.items() if k.endswith('/lite-catalog.js'))
+          main=next(v.decode() for k,v in web.items() if k.endswith('/main.js'))
+          browse=next(v.decode() for k,v in web.items() if k.endswith('/browse-shelves.js'))
+          assert 'images.attach=function' not in lite
+          assert 'CACTUS_LIGHT.titles()' in main and 'CACTUS_LIGHT.titles()' in browse
+          assert len(json.loads(next(v for k,v in web.items() if k.endswith('/wepa-catalog.json')))['channels'])==1748
+          print('PASS: 1748 registros conservados sin reemplazar reproductor ni catálogo LG')
+          PY
+      - name: Verificar conservación de arte al actualizar una ficha incompleta
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,re
+          b=pathlib.Path('CactusTV_LG_webOS6_2.0.26_Posters_Busqueda_Beta.ipk').read_bytes();p=8
+          while p<len(b):
+            h=b[p:p+60];n=h[:16].decode().strip().rstrip('/');l=int(h[48:58]);d=b[p+60:p+60+l];p+=60+l+l%2
+            if n=='data.tar.gz':break
+          with tarfile.open(fileobj=io.BytesIO(d),mode='r:gz') as z:
+            src=next(z.extractfile(m).read().decode() for m in z if m.name.endswith('/direct-api.js'))
+          fallback=src[src.index('function withCatalogueArtwork(r,id){'):src.index(' function supplementArtwork(',src.index('function withCatalogueArtwork(r,id){'))]
+          pathlib.Path('test-fallback.js').write_text(fallback+'\n'+"""
+          const assert=require('assert');
+          var boot={records:{'xuper-42':{contentId:'42',poster:'good-poster',wide:'good-wide',posterList:[{fileType:'icon',fileUrl:'good-poster'}]}}};
+          var records={'xuper-42':{raw:{contentId:'42',poster:'prior-poster',wide:'prior-wide'}}};
+          function artwork(r,wide){return wide?(r.wide||''):(r.poster||'');}
+          function list(a){return Array.isArray(a)?a:[];}
+          let obj=withCatalogueArtwork({contentId:'42',poster:'stale-image',name:'Example'},'xuper-42');
+          assert(obj.poster==='good-poster' && obj.wide==='good-wide');
+          let other=withCatalogueArtwork({contentId:'43',name:'Else'},'xuper-42');
+          assert(other.poster===undefined && other.wide===undefined);
+          console.log('PASS: carátula original recuperada y no mezcla IDs distintos');
+          """)
+          PY
+          node test-fallback.js
+      - name: Publicar solo pre-releases para testers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-2.0.26-posters-busqueda-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Standard_2.0.26_Posters_Busqueda_Beta.ipk CactusTV_LG_webOS6_2.0.26_Posters_Busqueda_Beta.ipk SHA256SUMS-LG-226.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" CactusTV_LG_Standard_2.0.26_Posters_Busqueda_Beta.ipk CactusTV_LG_webOS6_2.0.26_Posters_Busqueda_Beta.ipk SHA256SUMS-LG-226.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG 2.0.26 - prueba carátulas y búsqueda TV" \
+              --notes "Versión experimental para testers, no es actualización pública. Restablece la lógica original de LG para carátulas y evita iniciar nuevos videos automáticamente por cada búsqueda en TV en vivo: 450 ms de espera, cancela vistas previas anteriores y exige selección manual durante la búsqueda. En webOS6 'Solo títulos' deja de deshabilitar imágenes globalmente: afecta solo los listados y no los detalles. Preserva los 1748 registros importados en la 2.0.24/25, el reproductor de webOS, la barra de regreso y los cambios anteriores. Comprobaciones estructurales y de sintaxis realizadas, pendiente de validación en televisores reales." \
+              --prerelease --latest=false
+          fi
