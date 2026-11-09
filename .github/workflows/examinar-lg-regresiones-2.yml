@@ -31,7 +31,7 @@ jobs:
             print('POSTER MODULE TAIL',fs['poster-images.js'][-1200:])
             s=fs['live-view.js']
             print('LIVE TAIL',s[-6000:])
-            for needle in ['search.addEventListener','addEventListener(\\'input\\'','addEventListener("input"','search-focus','function applyExtraFilter','function loadPage']:
+            for needle in ["search.addEventListener","addEventListener('input'","addEventListener(\"input\"","search-focus","function applyExtraFilter","function loadPage"]:
               i=s.find(needle)
               if i>=0:print('LIVE MATCH',needle,s[max(0,i-100):i+1450])
           PY
