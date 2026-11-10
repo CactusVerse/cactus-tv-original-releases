@@ -85,7 +85,7 @@ jobs:
             name=next(m for m in t if m.name.endswith('/direct-api.js'))
             s=t.extractfile(name).read().decode('utf8')
           i=s.index(' function withCatalogueArtwork(')
-          j=s.index(' function supplementArtwork(',i)
+          j=s.index(' function remember(',i)
           pathlib.Path('artwork-function.js').write_text(s[i:j])
           PY
           node <<'JS'
