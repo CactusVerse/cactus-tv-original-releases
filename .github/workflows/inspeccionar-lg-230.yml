@@ -34,7 +34,7 @@ jobs:
             members=[m for m in t if m.isfile()]
             for m in members:
               name=m.name.rsplit('/',1)[-1]
-              if name in ['main.js','live-view.js','player-chrome.js','playback-controls.js','lg-tv-enhancements.css','main.css','style.css','styles.css','index.html','tv.js','app.js','direct-api.js','ui.js','webos.css']:
+              if name in ['main.js','live-view.js','player-chrome.js','playback-controls.js','lg-tv-enhancements.css','main.css','style.css','styles.css','index.html','tv.js','app.js','direct-api.js','ui.js','webos.css','favorites.js','navigation.js','focus.js','live-categories.js']:
                 Path('inspection',name).write_bytes(t.extractfile(m).read())
             Path('inspection/FILELIST.txt').write_text('\n'.join(m.name for m in members),encoding='utf-8')
           print('INSPECTION',[(x.name,x.stat().st_size) for x in Path('inspection').iterdir()])
