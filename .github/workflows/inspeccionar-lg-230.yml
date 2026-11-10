@@ -1,0 +1,46 @@
+name: Inspeccionar LG 2.0.29 player para mejoras 2.0.30
+on:
+  push:
+    paths:
+      - ".github/workflows/inspeccionar-lg-230.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspeccionar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar última versión LG webOS 6.0 
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download lg-2.0.29-caratulas-ime-hud-beta --repo "$GITHUB_REPOSITORY" --pattern 'CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk' --dir .
+          ls -lh *.ipk
+      - name: Extraer componentes para inspección, sin modificar fuentes
+        run: |
+          mkdir -p inspection
+          python3 - <<'PY'
+          from pathlib import Path
+          import tarfile,io
+          p=next(Path('.').glob('*.ipk'))
+          b=p.read_bytes(); pos=8; ar={}
+          assert b.startswith(b'!<arch>\n')
+          while pos<len(b):
+            h=b[pos:pos+60]; n=h[:16].decode().strip().rstrip('/')
+            size=int(h[48:58]); ar[n]=b[pos+60:pos+60+size]
+            pos+=60+size+size%2
+          with tarfile.open(fileobj=io.BytesIO(ar['data.tar.gz']),mode='r:gz') as t:
+            members=[m for m in t if m.isfile()]
+            for m in members:
+              name=m.name.rsplit('/',1)[-1]
+              if name in ['main.js','live-view.js','player-chrome.js','playback-controls.js','lg-tv-enhancements.css','main.css','style.css','styles.css','index.html','tv.js','app.js','direct-api.js','ui.js','webos.css']:
+                Path('inspection',name).write_bytes(t.extractfile(m).read())
+            Path('inspection/FILELIST.txt').write_text('\n'.join(m.name for m in members),encoding='utf-8')
+          print('INSPECTION',[(x.name,x.stat().st_size) for x in Path('inspection').iterdir()])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lg-229-inspection
+          path: inspection/
+          retention-days: 2
