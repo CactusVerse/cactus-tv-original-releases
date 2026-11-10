@@ -1,4 +1,5 @@
 name: Publicar LG 2.0.29 - correcciones verificadas
+# Metadatos control 2.0.28 erroneamente heredados de 2.0.27: corregidos en compilador
 on:
   push:
     paths:
