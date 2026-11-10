@@ -27,8 +27,8 @@ jobs:
           python3 -m py_compile /tmp/build-lg-230-ui.py
       - name: Reempaquetar ambas variantes sin modificar motor ni fuentes
         run: |
-          python3 /tmp/build-lg-230-ui.py LG_Standard_229.ipk CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk
-          python3 /tmp/build-lg-230-ui.py LG_webOS6_229.ipk CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+          python3 scripts/lg-230-compat.py /tmp/build-lg-230-ui.py LG_Standard_229.ipk CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+          python3 scripts/lg-230-compat.py /tmp/build-lg-230-ui.py LG_webOS6_229.ipk CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk
           dpkg-deb --info CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk
           dpkg-deb --info CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk
           sha256sum CactusTV_LG_*_2.0.30_*.ipk > SHA256SUMS-LG-230.txt
