@@ -1,0 +1,96 @@
+name: Compilar LG 2.0.30 beta - favoritos y último canal
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-230-beta.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  compilar-probar-publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar builds LG 2.0.29 y comprobar integridad
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download lg-2.0.29-caratulas-ime-hud-beta --repo "$GITHUB_REPOSITORY" --pattern '*.ipk'
+          gh release download lg-2.0.29-caratulas-ime-hud-beta --repo "$GITHUB_REPOSITORY" --pattern 'SHA256SUMS-LG-229.txt'
+          sha256sum -c SHA256SUMS-LG-229.txt
+          mv CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk LG_Standard_229.ipk
+          mv CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk LG_webOS6_229.ipk
+      - name: Restaurar compilador verificable desde fuente comprimida
+        run: |
+          base64 -d scripts/build-lg-230-ui.py.gz.b64 | gzip -dc > /tmp/build-lg-230-ui.py
+          echo "8b9f59939e23a15eecf8d08fc981c6c32876d7d53fbe90573f986517f66f1a0f  /tmp/build-lg-230-ui.py" | sha256sum -c -
+          python3 -m py_compile /tmp/build-lg-230-ui.py
+      - name: Reempaquetar ambas variantes sin modificar motor ni fuentes
+        run: |
+          python3 /tmp/build-lg-230-ui.py LG_Standard_229.ipk CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+          python3 /tmp/build-lg-230-ui.py LG_webOS6_229.ipk CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+          dpkg-deb --info CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+          sha256sum CactusTV_LG_*_2.0.30_*.ipk > SHA256SUMS-LG-230.txt
+      - name: Comprobar diff exacto y sintaxis JavaScript
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,json,subprocess
+          def read_ipk(path):
+            b=pathlib.Path(path).read_bytes(); assert b.startswith(b'!<arch>\n')
+            i=8;ar={}
+            while i<len(b):
+              h=b[i:i+60];n=h[:16].decode().strip().rstrip('/');z=int(h[48:58])
+              ar[n]=b[i+60:i+60+z];i+=60+z+z%2
+            with tarfile.open(fileobj=io.BytesIO(ar['data.tar.gz']),mode='r:gz') as t:
+              return {m.name.lstrip('./'):t.extractfile(m).read() for m in t if m.isfile()}
+          pairs=[('LG_Standard_229.ipk','CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk'),
+                 ('LG_webOS6_229.ipk','CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk')]
+          expected={'index.html','main.js','live-view.js','lg-tv-enhancements.css','appinfo.json','services.json','packageinfo.json'}
+          for oldname,newname in pairs:
+            old=read_ipk(oldname);new=read_ipk(newname)
+            assert old.keys()==new.keys(),newname
+            changed={n.rsplit('/',1)[-1] for n in old if old[n]!=new[n]}
+            assert changed==expected,(newname,changed)
+            for target in ['direct-api.js','poster-images.js','media-engine.js','playback-controls.js',
+                           'player-chrome.js','navigation.js','live-catalog.js','wepa-catalog.json',
+                           'sports-extras.json','xuper/stream.js','xuper/device.js']:
+              matches=[n for n in old if n.endswith('/'+target)]
+              for n in matches: assert old[n]==new[n],n
+            for target in ['main.js','live-view.js','player-chrome.js','playback-controls.js','direct-api.js']:
+              n=next(k for k in new if k.endswith('/'+target))
+              subprocess.run(['node','--check','-'],input=new[n],check=True)
+            html=next(v.decode() for n,v in new.items() if n.endswith('/index.html'))
+            assert html.index('id="lg-back-player"')<html.index('id="close-player"')
+            assert 'id="live-favorite"' in html
+            live=next(v.decode() for n,v in new.items() if n.endswith('/live-view.js'))
+            assert "cactus_last_live_" in live and "saveLast();" in live
+            assert 'cactusfavoriteschange' in live
+            app=json.loads(next(v for n,v in new.items() if n.endswith('/appinfo.json')))
+            assert app['version']=='2.0.30'
+            print('PASS:',newname,sorted(changed),len(new),'files; scripts valid; sources unchanged')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cactus-lg-230-beta-both
+          path: |
+            CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+            CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk
+            SHA256SUMS-LG-230.txt
+          retention-days: 14
+      - name: Crear lanzamiento de prueba, sin modificar la web pública
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=lg-2.0.30-favoritos-ultimo-canal-beta
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk SHA256SUMS-LG-230.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk \
+              CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk \
+              SHA256SUMS-LG-230.txt \
+              --title "Cactus TV LG 2.0.30 BETA - Favoritos, último canal y foco" \
+              --notes "Beta para validar con testers LG. Basada estrictamente en 2.0.29 (carátulas, teclado y HUD conservados). Ajusta el orden del foco ← Volver / X, incorpora la estrella Favorito en el panel de TV en vivo con almacenamiento por perfil existente, recuerda el último canal que llegó a reproducirse al volver de otras pestañas, y limita el overflow lateral de la vista de reproducción. No altera motor de vídeo, fuentes, catálogo, API ni servidor. Validaciones automáticas de integridad, diffs y sintaxis. Pendiente prueba en hardware LG real; no sustituye a la versión pública estable." \
+              --prerelease --latest=false --repo "$GITHUB_REPOSITORY"
+          fi
