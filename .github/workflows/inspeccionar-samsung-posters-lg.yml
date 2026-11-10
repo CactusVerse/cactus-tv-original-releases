@@ -1,0 +1,38 @@
+name: Inspeccionar parche Samsung portadas versus LG
+on:
+  push:
+    paths:
+      - ".github/workflows/inspeccionar-samsung-posters-lg.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspector:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recuperar paquete Samsung 0.4.9
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download CactusTV_Samsung_049_LISTO_PARA_PUBLICAR --repo "$GITHUB_REPOSITORY" --pattern "CactusTV_Samsung_65_DiagnosticoCaratulas_049.wgt"
+      - name: Extraer módulos de portadas sin credenciales
+        run: |
+          mkdir -p inspection-samsung
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          file=next(Path('.').glob('*.wgt'))
+          with ZipFile(file) as z:
+            items=z.namelist()
+            names=['cactus-search-artwork.js','direct-api.js','main.js','browse-shelves.js','poster-images.js','provider-worker.js']
+            for name in names:
+              options=[x for x in items if x.endswith('/'+name) or x==name]
+              if len(options)==1:Path('inspection-samsung',name).write_bytes(z.read(options[0]))
+              print(name,options)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: samsung-049-poster-reference
+          path: inspection-samsung/
+          retention-days: 2
