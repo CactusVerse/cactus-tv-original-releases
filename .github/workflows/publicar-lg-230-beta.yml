@@ -60,7 +60,7 @@ jobs:
             for target in ['main.js','live-view.js','player-chrome.js','playback-controls.js','direct-api.js']:
               n=next(k for k in new if k.endswith('/'+target))
               subprocess.run(['node','--check','-'],input=new[n],check=True)
-            html=next(v.decode() for n,v in new.items() if n.endswith('/index.html'))
+            html=next(v.decode() for n,v in new.items() if n.endswith('/backend/app/index.html'))
             assert html.index('id="lg-back-player"')<html.index('id="close-player"')
             assert 'id="live-favorite"' in html
             live=next(v.decode() for n,v in new.items() if n.endswith('/live-view.js'))
