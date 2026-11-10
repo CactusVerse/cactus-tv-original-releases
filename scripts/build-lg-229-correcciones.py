@@ -146,7 +146,10 @@ for i,(m,b) in enumerate(files):
 assert set(changes)==set(fixers)|{'appinfo.json','services.json','packageinfo.json'},changes
 for i,(m,b) in enumerate(control):
   if m.name.endswith('control'):
-    assert b'Version: 2.0.28' in b
+    # En 2.0.28 los metadatos Debian/control quedaron incorrectamente en 2.0.27.
+    # Corregir paquete final a 2.0.29 sin depender de ese desfase.
+    assert b'Version: 2.0.27' in b or b'Version: 2.0.28' in b
+    b=b.replace(b'Version: 2.0.27',b'Version: 2.0.29')
     b=b.replace(b'Version: 2.0.28',b'Version: 2.0.29');m.size=len(b)
     control[i]=(m,b)
 output=write_ar([('debian-binary',parts['debian-binary']),('control.tar.gz',write_tar(control)),('data.tar.gz',write_tar(files))])
