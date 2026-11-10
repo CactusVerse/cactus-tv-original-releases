@@ -1,0 +1,123 @@
+name: Publicar LG 2.0.27 - carátulas restauradas
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-227-caratulas.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar-y-comprobar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar versiones comprobadas
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o LG_2.0.12.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  LG_2.0.12.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.26-rendimiento-beta/CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk" -o LG_Standard_2.0.26.ipk
+          echo "044affdaf0cbe7318825f16f5acc47ad75672828e964536e8f9f886b745b110b  LG_Standard_2.0.26.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.26-rendimiento-beta/CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk" -o LG_webOS6_2.0.26.ipk
+          echo "4164ff43e36ecc9a425442f2097feac88e9708bc37b1c71bf2db9ee3c88c06a5  LG_webOS6_2.0.26.ipk" | sha256sum -c -
+      - name: Reconstruir dos versiones con sistema de carátulas funcional
+        run: |
+          python3 scripts/fix-lg-posters-227.py LG_Standard_2.0.26.ipk LG_2.0.12.ipk CactusTV_LG_Standard_2.0.27_Caratulas_Beta.ipk
+          python3 scripts/fix-lg-posters-227.py LG_webOS6_2.0.26.ipk LG_2.0.12.ipk CactusTV_LG_webOS6_2.0.27_Caratulas_Beta.ipk
+          dpkg-deb --info CactusTV_LG_Standard_2.0.27_Caratulas_Beta.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.27_Caratulas_Beta.ipk
+          sha256sum CactusTV_LG_Standard_2.0.27_Caratulas_Beta.ipk CactusTV_LG_webOS6_2.0.27_Caratulas_Beta.ipk > SHA256SUMS-LG-227.txt
+      - name: Confirmar integridad, preservación del reproductor y precarga de imágenes
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,json,subprocess
+          def files(path):
+            b=pathlib.Path(path).read_bytes();i=8
+            while i<len(b):
+              h=b[i:i+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58])
+              data=b[i+60:i+60+sz];i+=60+sz+sz%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as t:
+              return {m.name.lstrip('./'):t.extractfile(m).read() for m in t if m.isfile()}
+          working=files('LG_2.0.12.ipk')
+          stableposter=next(v for k,v in working.items() if k.endswith('/poster-images.js'))
+          for name in ('Standard','webOS6'):
+            before=files('LG_'+name+'_2.0.26.ipk')
+            after=files('CactusTV_LG_'+name+'_2.0.27_Caratulas_Beta.ipk')
+            assert before.keys()==after.keys()
+            changed=sorted(k.split('/')[-1] for k in before if before[k]!=after[k])
+            assert changed==['appinfo.json','direct-api.js','packageinfo.json','poster-images.js','services.json'],changed
+            poster=next(v for k,v in after.items() if k.endswith('/poster-images.js'))
+            assert poster==stableposter
+            assert b"document.addEventListener('keydown',schedule)" in poster
+            assert b"setInterval(schedule,1600);" in poster
+            direct=next(v for k,v in after.items() if k.endswith('/direct-api.js'))
+            assert b"withCatalogueArtwork(r,id)" in direct
+            assert b"function supplementArtwork(" in direct
+            assert b"function sportsExtras" in direct
+            for n in ('poster-images.js','direct-api.js','main.js','browse-shelves.js','live-view.js'):
+              code=next(v for k,v in after.items() if k.endswith('/'+n))
+              subprocess.run(['node','--check','-'],input=code,check=True)
+            for n in ('media-engine.js','playback-controls.js','server.js','launcher.js','catalog-bootstrap.json',
+                      'wepa-catalog.json','sports-extras.json','live-view.js','cactus-wepa.js','main.js','browse-shelves.js','settings.js',
+                      'lg-tv-enhancements.css','lite-catalog.js'):
+              a=next((v for k,v in before.items() if k.endswith('/'+n)),None)
+              b=next((v for k,v in after.items() if k.endswith('/'+n)),None)
+              assert a==b,(name,n)
+            info=json.loads(next(v for k,v in after.items() if k.endswith('/appinfo.json')))
+            assert info['version']=='2.0.27'
+            print('PASS',name,'new version',info['version'],'files',len(after),'changes',changed)
+          PY
+      - name: Prueba unitaria de conservación de portadas
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib
+          b=pathlib.Path('CactusTV_LG_webOS6_2.0.27_Caratulas_Beta.ipk').read_bytes();pos=8
+          while pos<len(b):
+            h=b[pos:pos+60];name=h[:16].decode().strip().rstrip('/');size=int(h[48:58])
+            data=b[pos+60:pos+60+size];pos+=60+size+size%2
+            if name=='data.tar.gz':break
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as t:
+            name=next(m for m in t if m.name.endswith('/direct-api.js'))
+            s=t.extractfile(name).read().decode('utf8')
+          i=s.index(' function withCatalogueArtwork(')
+          j=s.index(' function supplementArtwork(',i)
+          pathlib.Path('artwork-function.js').write_text(s[i:j])
+          PY
+          node <<'JS'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const source=fs.readFileSync('artwork-function.js','utf8');
+          const cases=[
+            {saved:{contentId:'100',poster:'https://cdn.example.org/poster.jpg',wide:'https://cdn.example.org/wide.jpg'},incoming:{contentId:'100',poster:'',wide:''},expected:'https://cdn.example.org/poster.jpg'},
+            {saved:{contentId:'100',poster:'https://cdn.example.org/poster.jpg'},incoming:{contentId:'101',poster:'',wide:''},expected:''},
+          ];
+          for(const row of cases){
+            const ctx={boot:{records:{'xuper-100':row.saved}},records:{},Object,Array};
+            ctx.list=x=>Array.isArray(x)?x:[];
+            ctx.artwork=(x,wide)=>x?(wide?x.wide||'':x.poster||''):'';
+            vm.runInNewContext(source,ctx);
+            const result=ctx.withCatalogueArtwork(row.incoming,'xuper-100');
+            assert.strictEqual(result.poster||'',row.expected);
+          }
+          console.log('PASS: retención sólo para el mismo contentId, sin contaminación entre películas');
+          JS
+      - name: Publicar betas de portadas sin modificar web
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-2.0.27-caratulas-restauradas-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Standard_2.0.27_Caratulas_Beta.ipk CactusTV_LG_webOS6_2.0.27_Caratulas_Beta.ipk SHA256SUMS-LG-227.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_Standard_2.0.27_Caratulas_Beta.ipk \
+              CactusTV_LG_webOS6_2.0.27_Caratulas_Beta.ipk \
+              SHA256SUMS-LG-227.txt --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG 2.0.27 — restauración de carátulas" \
+              --notes "Beta específica para corregir regresión de carátulas después de LG 2.0.24-2.0.26. Recupera el cargador exacto de imágenes que funcionaba en LG 2.0.12 (incluida programación al navegar y concurrencia) y conserva pósteres ya obtenidos del mismo contenido al refrescar el catálogo. Mantiene intactos nuevos canales, paginación, optimizaciones de foco, reproducción y modo ligero webOS 6.0. Probado en integridad, sintaxis y caso unitario de portadas. Requiere validación en TV real antes de reemplazar las descargas públicas. No toca LG Legacy." \
+              --prerelease --latest=false
+          fi
