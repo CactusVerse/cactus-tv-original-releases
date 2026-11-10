@@ -1,0 +1,128 @@
+name: Publicar LG 2.0.29 - correcciones verificadas
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-229-verificado.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  compilar-y-validar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar dos paquetes de 2.0.28 comprobados
+        run: |
+          curl -fL --retry 5 --retry-delay 3 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.28-caratulas-rendimiento-beta/CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk" -o LG_Standard_228.ipk
+          curl -fL --retry 5 --retry-delay 3 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.28-caratulas-rendimiento-beta/CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk" -o LG_webOS6_228.ipk
+          echo "266925902e7a1a1a7ed2606e34f9493b6ee282a5839ffd43824ddcc3ef169594  LG_Standard_228.ipk" | sha256sum -c -
+          echo "e8859f69ce7f5a684149be76eb345dbc2ee42c243037a66e49b9a62f57ccbb94  LG_webOS6_228.ipk" | sha256sum -c -
+      - name: Reempaquetar 2.0.29 con correcciones acotadas
+        run: |
+          python3 scripts/build-lg-229-correcciones.py LG_Standard_228.ipk CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk
+          python3 scripts/build-lg-229-correcciones.py LG_webOS6_228.ipk CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk
+          dpkg-deb --info CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk
+          sha256sum CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk > SHA256SUMS-LG-229.txt
+      - name: Validar cambios exactos sin alterar fuentes ni reproductor
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,subprocess,json
+          def files(path):
+            blob=pathlib.Path(path).read_bytes();p=8
+            while p<len(blob):
+              h=blob[p:p+60];name=h[:16].decode().strip().rstrip('/')
+              z=int(h[48:58]);b=blob[p+60:p+60+z];p+=60+z+z%2
+              if name=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(b),mode='r:gz') as t:
+              return {m.name.lstrip('./'):t.extractfile(m).read() for m in t if m.isfile()}
+          pairs=[('LG_Standard_228.ipk','CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk'),
+                 ('LG_webOS6_228.ipk','CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk')]
+          expected={'direct-api.js','player-chrome.js','main.js','lg-tv-enhancements.css','appinfo.json','packageinfo.json','services.json'}
+          for i,(before,after) in enumerate(pairs):
+            old=files(before);new=files(after)
+            assert old.keys()==new.keys()
+            changed={n.split('/')[-1] for n in old if old[n]!=new[n]}
+            assert changed==expected,(after,changed)
+            meta=json.loads(next(v for n,v in new.items() if n.endswith('/appinfo.json')))
+            assert meta['version']=='2.0.29'
+            for name in ['media-engine.js','playback-controls.js','server.js','launcher.js','service.js',
+                         'poster-images.js','cactus-wepa.js','wepa-catalog.json','sports-extras.json',
+                         'xuper/stream.js','xuper/device.js','live-view.js','settings.js']:
+              aa=next((v for n,v in old.items() if n.endswith('/'+name)),None)
+              bb=next((v for n,v in new.items() if n.endswith('/'+name)),None)
+              assert aa==bb,(after,name)
+            for name in ['direct-api.js','player-chrome.js','main.js']:
+              source=next(v for n,v in new.items() if n.endswith('/'+name))
+              subprocess.run(['node','--check','-'],input=source,check=True)
+              print('Syntax OK',after,name)
+            if i==0:
+              for name in ['direct-api.js','player-chrome.js','main.js']:
+                source=next(v for n,v in new.items() if n.endswith('/'+name))
+                pathlib.Path(name).write_bytes(source)
+            print('PASS',after,'modified',sorted(changed),'files',len(new))
+          PY
+      - name: Test de proxy seguro, teclado y controles que se ocultan
+        run: |
+          node <<'JS'
+          const fs=require('fs'),vm=require('vm'),assert=require('assert');
+          const api=fs.readFileSync('direct-api.js','utf8');
+          const fragment=api.slice(api.indexOf(' function image('),api.indexOf(' function artwork('));
+          assert(fragment.includes('function imagePath(value)'));
+          const isSafe=vm.runInNewContext('(function(){'+fragment+'return function(u){return !!imagePath(u)};})()');
+          const remote='https://image.tmdb.org/t/p/w500/abc.jpg';
+          const proxy='/__cactus__/image?u='+encodeURIComponent(remote);
+          assert(isSafe(proxy),'Valid local proxy rejected');
+          assert(isSafe(remote),'Trusted external artwork rejected');
+          assert(!isSafe('/file:///etc/passwd'));
+          assert(!isSafe('/__cactus__/image?u='+encodeURIComponent('javascript:alert(1)')));
+          assert(!isSafe('/__cactus__/image?u=http%3A%2F%2Ffoo.com%2F%0A'));
+          assert(api.includes('safeImage:function(url){return !!imagePath(url);}'));
+          const source=fs.readFileSync('main.js','utf8');
+          assert(source.includes("search.blur();"));
+          assert(source.includes("tab=selectedTab();if(tab&&tab.focus)tab.focus();"));
+          assert(source.includes('loadSection(selected,false,function(){leaveSearch(true);});'));
+          assert(source.includes("e.preventDefault();e.stopPropagation();completeSearch();"));
+          const input=source.slice(source.indexOf("search.addEventListener('input',function(){"),source.indexOf("video.addEventListener('error'"));
+          assert(!input.includes('loadSection('),'IME input may still fetch on every keystroke');
+          let active=false, next=[],events={},videoEvents={};
+          const cls={add(n){if(n==='controls-hidden')active=true;},remove(n){if(n==='controls-hidden')active=false;}};
+          const player={hidden:false,contains(){return false;},addEventListener(n,f){events[n]=f;}};
+          const video={addEventListener(n,f){videoEvents[n]=f;}};
+          const doc={body:{classList:cls},getElementById(id){return id==='player'?player:id==='video'?video:{focus(){}};},
+                     addEventListener(n,f){events['doc-'+n]=f;}};
+          const window={CACTUS_TRACKS:{isOpen:()=>false},CACTUS_SETTINGS:{isOpen:()=>false}};
+          const ctx={document:doc,window,setTimeout(fn,ms){next.push({fn,ms});return next.length;},clearTimeout(){}};
+          vm.runInNewContext(fs.readFileSync('player-chrome.js','utf8'),ctx);
+          window.CACTUS_CHROME.open();
+          assert(next.some(x=>x.ms===3000),'HUD must schedule hide on open');
+          next[next.length-1].fn();
+          assert(active,'Controls should be hidden');
+          window.CACTUS_CHROME.show(false);
+          assert(!active,'HUD should reappear');
+          const count=next.length;
+          videoEvents.waiting();
+          assert(next.length>count,'Waiting must not cancel hiding permanently');
+          window.CACTUS_CHROME.close();
+          assert(!active);
+          console.log('PASS: safe proxy URLs, no per-keypress fetching, keyboard focus before work, HUD hides after 3 seconds even while buffering');
+          JS
+      - name: Publicar betas separadas sin reemplazar descargas de la web
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-2.0.29-caratulas-ime-hud-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk SHA256SUMS-LG-229.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk \
+              CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk \
+              SHA256SUMS-LG-229.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG 2.0.29 — carátulas, teclado y HUD" \
+              --notes "Beta de diagnóstico corregido, estándar y webOS6. Se detectó rechazo de los proxies locales /__cactus__/image por safeImage de direct-api; la nueva validación reutiliza imagePath, que valida URL externa y proxy estrictamente. El controlador de video ahora oculta HUD y botón Volver aunque el video esté en buffering o reproductor nativo. Se evita buscar con cada tecla del IME de LG, procesando solo al pulsar Ingresar y quitando el foco del campo antes de procesar. Sin cambios al servidor, fuentes, playlists o motor de reproducción ni a LG Legacy. Comprobaciones automatizadas de empaquetado, JS y UI simulada. Falta validar en LG real antes de sustituir la descarga pública." \
+              --prerelease --latest=false
+          fi
