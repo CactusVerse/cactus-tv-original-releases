@@ -1,0 +1,139 @@
+name: Publicar LG 2.0.28 - carátulas, búsqueda y rendimiento
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-228-caratulas.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar versiones originales con integridad SHA-256
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o LG_2.0.12.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  LG_2.0.12.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.26-rendimiento-beta/CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk" -o LG_Standard_2.0.26.ipk
+          echo "044affdaf0cbe7318825f16f5acc47ad75672828e964536e8f9f886b745b110b  LG_Standard_2.0.26.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.26-rendimiento-beta/CactusTV_LG_webOS6_2.0.26_Rendimiento_Beta.ipk" -o LG_webOS6_2.0.26.ipk
+          echo "4164ff43e36ecc9a425442f2097feac88e9708bc37b1c71bf2db9ee3c88c06a5  LG_webOS6_2.0.26.ipk" | sha256sum -c -
+      - name: Compilar versión estándar y webOS6
+        run: |
+          python3 scripts/fix-lg-posters-228.py LG_Standard_2.0.26.ipk LG_2.0.12.ipk CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk
+          python3 scripts/fix-lg-posters-228.py LG_webOS6_2.0.26.ipk LG_2.0.12.ipk CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk
+          dpkg-deb --info CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk
+          sha256sum CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk > SHA256SUMS-LG-228.txt
+      - name: Verificar alcance del parche, portadas e integridad multimedia
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,json,subprocess
+          def extract(path):
+            b=pathlib.Path(path).read_bytes();pos=8
+            while pos<len(b):
+              h=b[pos:pos+60];sz=int(h[48:58]);n=h[:16].decode().strip().rstrip('/')
+              blob=b[pos+60:pos+60+sz];pos+=60+sz+sz%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(blob),mode='r:gz') as t:
+              return {m.name.lstrip('./'):t.extractfile(m).read() for m in t if m.isfile()}
+          base=extract('LG_2.0.12.ipk')
+          working_poster=next(v for k,v in base.items() if k.endswith('/poster-images.js'))
+          for variant in ['Standard','webOS6']:
+            before=extract('LG_'+variant+'_2.0.26.ipk')
+            after=extract('CactusTV_LG_'+variant+'_2.0.28_Caratulas_Rapido_Beta.ipk')
+            assert before.keys()==after.keys()
+            touched={k.split('/')[-1] for k in before if before[k]!=after[k]}
+            expected={'appinfo.json','direct-api.js','live-view.js','packageinfo.json','poster-images.js','services.json'}
+            if variant=='webOS6':expected|={'main.js','browse-shelves.js','lite-catalog.js'}
+            assert touched==expected,(variant,touched,expected)
+            poster=next(v for k,v in after.items() if k.endswith('/poster-images.js'))
+            assert poster==working_poster
+            assert b"setInterval(schedule,1600);" in poster
+            assert b"document.addEventListener('keydown',schedule)" in poster
+            api=next(v.decode() for k,v in after.items() if k.endswith('/direct-api.js'))
+            assert api.count('function withCatalogueArtwork(')==1
+            assert "r=withCatalogueArtwork(r,id);" in api
+            assert 'function sportsExtras' in api
+            assert "r=supplementArtwork(r,records[id]&&records[id].raw);" not in api
+            lv=next(v.decode() for k,v in after.items() if k.endswith('/live-view.js'))
+            assert 'lgSearchTimer=setTimeout(' in lv
+            assert 'updateChannelSelection(previousId,item.id)' in lv
+            assert 'renderChannels(next===1?0:old)' in lv
+            assert 'if(next===1&&!query&&rows.length' in lv
+            for name in ['poster-images.js','direct-api.js','live-view.js','main.js','browse-shelves.js','lite-catalog.js']:
+              code=next((v for k,v in after.items() if k.endswith('/'+name)),None)
+              if code is not None:subprocess.run(['node','--check','-'],input=code,check=True)
+            for name in ['playback-controls.js','media-engine.js','server.js','launcher.js',
+                         'xuper/device.js','xuper/stream.js','wepa-catalog.json',
+                         'sports-extras.json','cactus-wepa.js','lg-tv-enhancements.css','settings.js']:
+              old=next((v for k,v in before.items() if k.endswith('/'+name)),None)
+              new=next((v for k,v in after.items() if k.endswith('/'+name)),None)
+              assert old==new,(variant,name)
+            assert len(json.loads(next(v for k,v in after.items() if k.endswith('/wepa-catalog.json')))['channels'])==1748
+            meta=json.loads(next(v for k,v in after.items() if k.endswith('/appinfo.json')))
+            assert meta['version']=='2.0.28'
+            if variant=='webOS6':
+              lite=next(v.decode() for k,v in after.items() if k.endswith('/lite-catalog.js'))
+              assert "images.attach=function" not in lite
+              main=next(v.decode() for k,v in after.items() if k.endswith('/main.js'))
+              assert "CACTUS_LIGHT.titles()" in main
+            print('PASS',variant,'files',len(after),'modified',sorted(touched))
+          PY
+      - name: Test unitario de preservación de la carátula original
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib
+          b=pathlib.Path('CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk').read_bytes()
+          pos=8
+          while pos<len(b):
+            h=b[pos:pos+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58])
+            x=b[pos+60:pos+60+sz];pos+=60+sz+sz%2
+            if n=='data.tar.gz':break
+          with tarfile.open(fileobj=io.BytesIO(x),mode='r:gz') as tar:
+            m=next(m for m in tar if m.name.endswith('/direct-api.js'))
+            source=tar.extractfile(m).read().decode()
+          i=source.index(' function withCatalogueArtwork(')
+          j=source.index(' function remember(',i)
+          pathlib.Path('artwork-fallback.js').write_text(source[i:j])
+          PY
+          node <<'JS'
+          const vm=require('vm'),fs=require('fs'),assert=require('assert');
+          const source=fs.readFileSync('artwork-fallback.js','utf8');
+          const saved={contentId:'42',poster:'good-poster',wide:'good-wide',posterList:[{fileType:'icon',fileUrl:'good-poster'}]};
+          const ctx={boot:{records:{'xuper-42':saved}},records:{},Array,Object};
+          ctx.list=x=>Array.isArray(x)?x:[];
+          ctx.artwork=(r,wide)=>r?(wide?r.wide||'':r.poster||''):'';
+          vm.runInNewContext(source,ctx);
+          const result=ctx.withCatalogueArtwork({contentId:'42',name:'Title',poster:''},'xuper-42');
+          assert.strictEqual(result.poster,'good-poster');
+          assert.strictEqual(result.wide,'good-wide');
+          const other=ctx.withCatalogueArtwork({contentId:'99',name:'Different'},'xuper-42');
+          assert.strictEqual(other.poster,undefined);
+          console.log('PASS: se conserva la carátula cuando coincide el ID y no se mezcla con otro título');
+          JS
+      - name: Publicar dos betas para testear, sin cambiar la web
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="lg-2.0.28-caratulas-rendimiento-beta"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk \
+              CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk \
+              SHA256SUMS-LG-228.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk \
+              CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk \
+              SHA256SUMS-LG-228.txt --repo "$GITHUB_REPOSITORY" \
+              --title "Cactus TV LG 2.0.28 - carátulas recuperadas y navegación rápida" \
+              --notes "Beta para pruebas: basada en las LG 2.0.26 con nuevos canales, índice y paginación, restaura el cargador de imágenes LG 2.0.12, evita perder imágenes previas del mismo contentId, añade mejoras de búsqueda TV de la 2.0.27 y limita el modo Solo títulos a las listas. NO se modifican fuentes, reproductor, servidor, configuración ni LG Legacy. Probada estructura IPK, sintaxis y restauración por ID; falta probar en TV real antes de cambiar la descarga pública." \
+              --prerelease --latest=false
+          fi
