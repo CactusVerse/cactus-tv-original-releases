@@ -1,0 +1,51 @@
+name: Auditar restauracion caratulas LG 2.0.26
+on:
+  push:
+    paths:
+      - ".github/workflows/auditar-caratu-las-lg-227.yml"
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  examinar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar la LG de referencia y las dos nuevas betas
+        run: |
+          curl -fLsS --retry 4 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o old.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  old.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.26-rendimiento-beta/CactusTV_LG_Standard_2.0.26_Rendimiento_Beta.ipk" -o new.ipk
+          echo "044affdaf0cbe7318825f16f5acc47ad75672828e964536e8f9f886b745b110b  new.ipk" | sha256sum -c -
+      - name: Examinar diferencias del motor de caratulas y proxy
+        run: |
+          python3 - <<'PY'
+          import re,tarfile,io,pathlib,hashlib
+          def read(path):
+            b=pathlib.Path(path).read_bytes();p=8
+            while p<len(b):
+              h=b[p:p+60];n=h[:16].decode().strip().rstrip('/');sz=int(h[48:58]);v=b[p+60:p+60+sz];p+=60+sz+sz%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(v),mode='r:gz') as f:
+              return {m.name.split('/')[-1]:f.extractfile(m).read().decode('utf8','replace') for m in f if m.isfile() and m.name.endswith(('.js','.html','.css'))}
+          old=read('old.ipk');new=read('new.ipk')
+          def redact(x):
+            return re.sub(r'https?://[^ \n"\\x27]+','[URL]',x)
+          for f in ['direct-api.js','poster-images.js','provider-worker.js','providers.js','main.js','browse-shelves.js','lite-catalog.js','catalog-cache.js','index.html']:
+            if f not in old or f not in new:continue
+            print('\n===',f,'OLD',len(old[f]),'NEW',len(new[f]),'SAME',old[f]==new[f],'===')
+            for src,label in [(old[f],'OLD'),(new[f],'NEW')]:
+              if f=='direct-api.js':
+                for first,stop in [(' function withCatalogueArtwork(',' function remember('),(' function supplementArtwork(',' function remember('),(' function remember(',' function hydrate('),(' function hydrate(',' if(background)')]:
+                  a=src.find(first);b=src.find(stop,a+len(first))
+                  if a>=0 and b>a:print(label,first,redact(src[a:b])[:4300])
+              elif f=='poster-images.js':
+                for token in ['function schedule(','function observe(','function load(','function scan(','window.CACTUS_IMAGES={','function refresh(']:
+                  a=src.find(token)
+                  if a>=0:print(label,token,redact(src[a:a+1100]))
+              elif f=='provider-worker.js':
+                for token in ['function artwork(','function photo(','function toCard(','function convert(','function fetchPoster(','function records(']:
+                  a=src.find(token)
+                  if a>=0:print(label,token,redact(src[a:a+900]))
+            if f=='index.html':
+              for token in ['poster-images.js','direct-api.js','cactus-wepa.js','lite-catalog.js']:
+                print('Script',token,'OLD',old[f].find(token),'NEW',new[f].find(token))
+          PY
