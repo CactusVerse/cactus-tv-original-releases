@@ -1,0 +1,78 @@
+name: Verificar LG 2.0.28 frente a 2.0.12 Compat proporcionada
+on:
+  push:
+    paths:
+      - ".github/workflows/verificar-lg-228-vs-compat.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  comparar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar referencia Compat y betas 2.0.28
+        run: |
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-compat-test/CactusTV_LG_2.0.12_R9_Compat.ipk" \
+            -o referencia-212.ipk
+          echo "f7a2907f9359cd542f90545d9df5c2cf0e1c47383e8718e989fffb6f359b3e48  referencia-212.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.28-caratulas-rendimiento-beta/CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk" -o lg-standard-228.ipk
+          echo "266925902e7a1a1a7ed2606e34f9493b6ee282a5839ffd43824ddcc3ef169594  lg-standard-228.ipk" | sha256sum -c -
+          curl -fLsS --retry 4 --retry-delay 2 \
+            "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.28-caratulas-rendimiento-beta/CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk" -o lg-webos6-228.ipk
+          echo "e8859f69ce7f5a684149be76eb345dbc2ee42c243037a66e49b9a62f57ccbb94  lg-webos6-228.ipk" | sha256sum -c -
+      - name: Auditar restauración exacta, versionado y catálogo
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,hashlib,json,subprocess
+          def read_data(path):
+              raw=pathlib.Path(path).read_bytes()
+              assert raw.startswith(b'!<arch>\n')
+              pos=8;part={}
+              while pos<len(raw):
+                  header=raw[pos:pos+60];assert header[58:60]==bytes((96,10))
+                  name=header[:16].decode().strip().rstrip('/')
+                  size=int(header[48:58]);part[name]=raw[pos+60:pos+60+size]
+                  pos+=60+size+size%2
+              assert pos==len(raw)
+              assert set(part)=={'debian-binary','control.tar.gz','data.tar.gz'}
+              assert part['debian-binary']==b'2.0\n'
+              with tarfile.open(fileobj=io.BytesIO(part['data.tar.gz']),mode='r:gz') as t:
+                  return {m.name.lstrip('./'):t.extractfile(m).read() for m in t if m.isfile()}
+          ref=read_data('referencia-212.ipk')
+          path=lambda obj,suffix: next(v for k,v in obj.items() if k.endswith('/'+suffix))
+          poster_ref=path(ref,'poster-images.js')
+          old_api=path(ref,'direct-api.js').decode('utf8')
+          start=old_api.index(' function withCatalogueArtwork(')
+          end=old_api.index(' function remember(',start)
+          fallback_ref=old_api[start:end].strip()
+          for build in ['lg-standard-228.ipk','lg-webos6-228.ipk']:
+              current=read_data(build)
+              assert path(current,'poster-images.js')==poster_ref,build
+              api=path(current,'direct-api.js').decode('utf8')
+              a=api.index(' function withCatalogueArtwork(')
+              b=api.index(' function remember(',a)
+              assert api[a:b].strip()==fallback_ref,build
+              assert api.count('function withCatalogueArtwork(')==1
+              assert 'r=withCatalogueArtwork(r,id);' in api
+              assert 'function sportsExtras(' in api
+              live=path(current,'live-view.js').decode('utf8')
+              assert 'lgSearchTimer=setTimeout(' in live
+              assert 'if(next===1&&!query&&rows.length' in live
+              assert "applyExtraFilter(false)" in live
+              catalog=json.loads(path(current,'wepa-catalog.json'))
+              assert len(catalog['channels'])==1748
+              meta=json.loads(path(current,'appinfo.json'))
+              assert meta['version']=='2.0.28'
+              for f in ['poster-images.js','direct-api.js','live-view.js','main.js','browse-shelves.js']:
+                  subprocess.run(['node','--check','-'],input=path(current,f),check=True)
+              if 'webos6' in build:
+                  light=path(current,'lite-catalog.js').decode()
+                  assert 'images.attach=function' not in light
+                  assert 'CACTUS_LIGHT.titles()' in path(current,'main.js').decode()
+                  assert 'CACTUS_LIGHT.titles()' in path(current,'browse-shelves.js').decode()
+              print('VERIFICADO',build,'poster loader hash',hashlib.sha256(poster_ref).hexdigest(),
+                    'same fallback true','new channels',len(catalog['channels']),'app version',meta['version'])
+          print('AUDITORÍA FINAL COMPLETA')
+          PY
