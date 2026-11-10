@@ -1,0 +1,63 @@
+name: Auditar API de carátulas y foco LG28
+on:
+  push:
+    paths: [".github/workflows/auditar-api-foco-lg28.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fLsS --retry 5 --retry-delay 2 \
+          "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.28-caratulas-rendimiento-beta/CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk" -o lg.ipk
+          echo "266925902e7a1a1a7ed2606e34f9493b6ee282a5839ffd43824ddcc3ef169594  lg.ipk" | sha256sum -c -
+          python3 - <<'PY'
+          import pathlib,tarfile,io,re
+          raw=pathlib.Path("lg.ipk").read_bytes();pos=8
+          while pos<len(raw):
+           h=raw[pos:pos+60];z=int(h[48:58]);n=h[:16].decode().strip().rstrip("/")
+           b=raw[pos+60:pos+60+z];pos+=60+z+z%2
+           if n=="data.tar.gz":break
+          with tarfile.open(fileobj=io.BytesIO(b),mode="r:gz") as t:
+           d={m.name.split("/backend/app/")[-1]:t.extractfile(m).read().decode("utf8","replace") for m in t if m.isfile() and "/backend/app/" in m.name and m.name.endswith((".js",".css",".html"))}
+          def snippet(code,key,end=None,size=1600):
+           i=code.find(key)
+           if i<0:return "<missing>"
+           if end:
+            j=code.find(end,i+len(key))
+            if j>=0:return code[i:j][:size]
+           return code[i:i+size]
+          def safe(v):
+           v=re.sub(r'https?://[^\\s\\x22\\x27]+','[URL]',v)
+           v=re.sub(r'(?i)(authorization|apikey|token|password|secret)\\s*[:=]\\s*[\\x22\\x27][^\\x22\\x27]+',r'\\1=[REDACTED]',v)
+           return v
+          for n in ['direct-api.js','main.js','poster-images.js','live-view.js','playback-controls.js','chrome.js','lg-tv-enhancements.css','index.html','settings.js','search.js']:
+           if n not in d:continue
+           s=d[n];print('\n#####',n)
+           if n=='direct-api.js':
+            for k,e in [(' function image(',' function artwork('),(' function imagePath(',' function artwork('),(' function artwork(',' function supplementArtwork('),(' function withCatalogueArtwork(',' function remember('),('function safeImage(','function poster('),(' safeImage:',None),(' poster:',None),('function poster(',None)]:
+             print('FUNC',k, safe(snippet(s,k,e,2500)))
+            print('EXPORTS',safe(s[-3000:]))
+           if n=='main.js':
+            for k,e in [(' function safeImage(',' function validData('),('function completeSearch(',None),(' function back(',None),("search.addEventListener('keydown'",None),("document.addEventListener('keydown'",None),(" function doSearch(",None)]:
+             print('FUNC',k,safe(snippet(s,k,e,2400)))
+           if n=='poster-images.js':
+            for k,e in [(' function load(', ' function pump('),("window.CACTUS_IMAGES=",None)]:
+             print('FUNC',k,safe(snippet(s,k,e,3000)))
+           if n=='live-view.js':
+            for k,e in [('function search(',None),('search:function(value,done)',None),(' function close(',None)]:
+             print('FUNC',k,safe(snippet(s,k,e,2200)))
+           if n=='playback-controls.js':
+            for k,e in [("function hide",None),("function show",None),("window.CACTUS_CHROME",None),("classList.add",None),("classList.remove",None)]:
+             print('FUNC',k,safe(snippet(s,k,e,2200)))
+           if n=='chrome.js':print('CODE',safe(s[:4500]))
+           if n=='lg-tv-enhancements.css':
+            for line in s.splitlines():
+             if any(y in line for y in ['controls-hidden','lg-back-player','fullscreen','scrollbar']):
+              print('CSS',safe(line[:1000]))
+           if n=='index.html':
+            for line in s.splitlines():
+             if any(y in line for y in ['search','keyboard','lg-back-player','player']):
+              if len(line)<1000:print('HTML',safe(line))
+          PY
