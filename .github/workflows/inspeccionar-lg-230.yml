@@ -15,7 +15,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download lg-2.0.29-caratulas-ime-hud-beta --repo "$GITHUB_REPOSITORY" --pattern 'CactusTV_LG_webOS6_2.0.29_Caratulas_IME_HUD.ipk' --dir .
+          gh release download lg-2.0.29-caratulas-ime-hud-beta --repo "$GITHUB_REPOSITORY" --pattern 'CactusTV_LG_Standard_2.0.29_Caratulas_IME_HUD.ipk' --dir .
           ls -lh *.ipk
       - name: Extraer componentes para inspección, sin modificar fuentes
         run: |
