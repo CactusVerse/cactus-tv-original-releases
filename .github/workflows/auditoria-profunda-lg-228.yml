@@ -1,0 +1,63 @@
+name: AUDITORIA PROFUNDA LG 2.0.28 fallos comprobados
+on:
+  push:
+    paths: [".github/workflows/auditoria-profunda-lg-228.yml"]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  analizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar paquetes y comprobar identidad
+        run: |
+          curl -fL --retry 5 --retry-delay 3 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.12-r9-beta/CactusTV_LG_Beta_2.0.12.ipk" -o stable.ipk
+          curl -fL --retry 5 --retry-delay 3 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.28-caratulas-rendimiento-beta/CactusTV_LG_Standard_2.0.28_Caratulas_Rapido_Beta.ipk" -o current.ipk
+          curl -fL --retry 5 --retry-delay 3 "https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-2.0.28-caratulas-rendimiento-beta/CactusTV_LG_webOS6_2.0.28_Caratulas_Rapido_Beta.ipk" -o os6.ipk
+          echo "20216ead1c0fc798dc2f88519eda5c9e3f007c5e4320a654b76d71aeb782fbcd  stable.ipk" | sha256sum -c -
+          echo "266925902e7a1a1a7ed2606e34f9493b6ee282a5839ffd43824ddcc3ef169594  current.ipk" | sha256sum -c -
+          echo "e8859f69ce7f5a684149be76eb345dbc2ee42c243037a66e49b9a62f57ccbb94  os6.ipk" | sha256sum -c -
+      - name: Auditar archivos y flujos UI
+        run: |
+          python3 - <<'PY'
+          import zipfile,io,tarfile,pathlib,re,difflib
+          def files(path):
+            b=pathlib.Path(path).read_bytes();p=8
+            while p<len(b):
+              h=b[p:p+60];n=h[:16].decode().strip().rstrip('/');z=int(h[48:58]);v=b[p+60:p+60+z];p+=60+z+z%2
+              if n=='data.tar.gz':break
+            with tarfile.open(fileobj=io.BytesIO(v),mode='r:gz') as t:
+              return {m.name.split('/backend/app/')[-1]:t.extractfile(m).read().decode('utf8','replace') for m in t if m.isfile() and '/backend/app/' in m.name and m.name.endswith(('.js','.css','.html'))}
+          stable=files('stable.ipk');cur=files('current.ipk');os6=files('os6.ipk')
+          print("=== MANIFEST ===",len(stable),len(cur),len(os6))
+          print("=== CHANGED ===",[(k,len(cur.get(k,'')),len(stable.get(k,''))) for k in sorted(set(cur)|set(stable)) if cur.get(k)!=stable.get(k)])
+          def scrub(s):return re.sub(r'https?://[^\s\\x22\\x27]+','[URL]',s)[:500]
+          important={
+           'poster-images.js':['function attach(','function schedule(','function render','function observer','function direct','function image','addEventListener','active.length','function release('],
+           'direct-api.js':['function withCatalogueArtwork','function supplementArtwork','function imagePath','function image(','function artwork(','function posterList','function remember(','function normalise('],
+           'main.js':['function posterFor(','function safeImage(','function render(','var items=shown','function search(','function openSearch(','searchInput','keydown','keyup'],
+           'browse-shelves.js':['function fill(','function poster','function render(','CACTUS_IMAGES','safeImage('],
+           'live-view.js':['function renderChannels(','function search(','function close(','search:function(value','function preview(','function loadPage(','function selectCategory('],
+           'playback-controls.js':['function hud','function hide','function show','controls-hidden','player-back','playerBack','function enterFullscreen','function exitFullscreen'],
+           'lg-tv-enhancements.css':['.lg-back-player','controls-hidden','fullscreen','iframe'],
+           'index.html':['live-search','search-input','live-search-input','player','controls-hidden','lg-back','keydown','keyup','script src']
+          }
+          for name,tokens in important.items():
+            s=cur.get(name,'');old=stable.get(name,'')
+            print('\n========',name,'len',len(s),'old len',len(old),'changed',s!=old,'========')
+            for token in tokens:
+              locs=[m.start() for m in list(re.finditer(re.escape(token),s))[:4]]
+              if locs:
+                print('TOKEN',token,'POS',locs)
+                for at in locs[:2]:
+                  print('CTX',scrub(s[max(0,at-200):min(len(s),at+1100)]))
+            if name in ['lg-tv-enhancements.css','index.html']:
+              for line in s.splitlines():
+                if re.search(r'controls-hidden|player-back|lg-back-player|live-search|keyboard|search-input',line,re.I):
+                  print('RULE',scrub(line[:600]))
+          for name in ['poster-images.js','direct-api.js','main.js','live-view.js']:
+            old=stable.get(name,'').splitlines();new=cur.get(name,'').splitlines()
+            diff=list(difflib.unified_diff(old,new,n=1))
+            print('\n=== DIFF',name,'lines',len(diff),'===')
+            for line in diff[:110]:
+              print('D',scrub(line))
+          PY
