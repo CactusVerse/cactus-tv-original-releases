@@ -1,7 +1,7 @@
 /* LG 2.0.37: recover only missing/failed search artwork, two requests at a time. */
 (function(w){'use strict';
  var api=w.CACTUS_API,original=api.search,seq=0,queue=[],active=0,items={},attempted={};
- function present(x){var cards=document.querySelectorAll('#catalog button.media-card');for(var i=0;i<cards.length;i++)if(cards[i].getAttribute('data-id')===x.id)return true;return false;}
+ function present(x){var input=document.getElementById('search');if(input&&!input.value.trim())return false;var cards=document.querySelectorAll('#catalog button.media-card');for(var i=0;i<cards.length;i++)if(cards[i].getAttribute('data-id')===x.id)return true;return false;}
  function notify(){var e=document.createEvent('Event');e.initEvent('cactusartworkchange',false,false);document.dispatchEvent(e);}
  function enqueue(x){if(!x||!x.isSearchResult||attempted[x.id]||!present(x))return;attempted[x.id]=true;queue.push({item:x,seq:seq});pump();}
  function pump(){while(active<2&&queue.length){var job=queue.shift();if(job.seq!==seq||!present(job.item))continue;run(job);}}
