@@ -1,0 +1,52 @@
+name: Publicar Cactus TV LG 2.0.35 oficial
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-235-oficial.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar las dos bases 2.0.30 firmadas por hash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download lg-2.0.30-favoritos-ultimo-canal-beta --repo "$GITHUB_REPOSITORY" --pattern 'CactusTV_LG_*_2.0.30_Favoritos_UltimoCanal_Beta.ipk'
+          echo "a55b4d7262a35d5a67518d521981003624473ce82c30fd1ad6a8fad87fe8f93d  CactusTV_LG_Standard_2.0.30_Favoritos_UltimoCanal_Beta.ipk" | sha256sum -c -
+          echo "b91d0babf4603ab1ed91b154a30845ef6ac0def5be8ade1b472f3feaec86f9e4  CactusTV_LG_webOS6_2.0.30_Favoritos_UltimoCanal_Beta.ipk" | sha256sum -c -
+      - name: Comprobar el paquete técnico original
+        run: |
+          cat scripts/lg235-part*.txt | base64 -d | xz -t
+          python3 - <<'PY'
+          import hashlib,pathlib
+          s=''.join(p.read_text().strip() for p in sorted(pathlib.Path('scripts').glob('lg235-part*.txt')))
+          assert len(s)==29232
+          h=2166136261
+          for c in s:
+            h=((h^ord(c))*16777619)&0xffffffff
+          assert h==0x9b49bf15,'Paquete de cambios diferente al validado'
+          print('Delta OK',len(s))
+          PY
+      - name: Compilar ambas variantes y validar cada archivo modificado
+        run: |
+          python3 scripts/build-lg-235-release.py
+          dpkg-deb --info CactusTV_LG_Standard_2.0.35_Oficial.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.35_Oficial.ipk
+          sha256sum CactusTV_LG_Standard_2.0.35_Oficial.ipk CactusTV_LG_webOS6_2.0.35_Oficial.ipk > SHA256SUMS-LG-235.txt
+      - name: Publicar las dos versiones oficiales
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=lg-2.0.35-oficial
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Standard_2.0.35_Oficial.ipk CactusTV_LG_webOS6_2.0.35_Oficial.ipk SHA256SUMS-LG-235.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" CactusTV_LG_Standard_2.0.35_Oficial.ipk CactusTV_LG_webOS6_2.0.35_Oficial.ipk SHA256SUMS-LG-235.txt \
+              --title "Cactus TV LG 2.0.35 — Primer lanzamiento oficial" \
+              --notes "¡Cactus TV llega oficialmente a LG! Versiones LG estándar y LG webOS 6.0. Esta publicación reúne carátulas recuperadas en catálogo y búsquedas, favoritos, regreso al último canal, sección Kids, controles de PIN para Adultos, panel de canales durante la reproducción, búsqueda de actualizaciones y limpieza visual de barras laterales. La guía EPG requiere datos reales del proveedor. Instalación manual mediante Developer Mode/webOS Dev Manager. La compatibilidad puede variar por modelo LG. Esta es la primera publicación oficial LG 2.0.35; otras plataformas no cambian." \
+              --latest=false --repo "$GITHUB_REPOSITORY"
+          fi
