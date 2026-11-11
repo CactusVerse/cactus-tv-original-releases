@@ -14,6 +14,19 @@ async function run(kind){
  let first=pend.shift();first.onerror();for(let im of imgs.slice(1)){im._ok=true;}let drain=setInterval(()=>{for(let im of imgs.slice(1))if(im.onload)im.onload();},20);await wait(400);clearInterval(drain);assert.equal(first._src,'https://img.example/fallback.jpg');
  first.onerror();await wait(50);assert.equal(events,1);assert.equal(first._cactusTask.state,'failed');
  w.CACTUS_IMAGES.release(grid);assert.equal(w.CACTUS_IMAGES.status().active,0);assert.equal(w.CACTUS_IMAGES.status().queued,0);assert(imgs.every(x=>!x._cactusTask));d.window.close();
+ d=dom();w=d.window;
+ let navgrid=w.document.getElementById('catalog');navgrid.setAttribute('data-nav-row','grid');
+ for(let i=0;i<40;i++){let b=w.document.createElement('button');let im=w.document.createElement('img');b.appendChild(im);navgrid.appendChild(b);}
+ evaluate(w,read('navigation.js'));navgrid.firstChild.focus();w.CACTUS_NAVIGATION.move(w.document,39);let builds=w.CACTUS_NAVIGATION.stats().builds;
+ let image=navgrid.querySelector('img');image.hidden=true;w.CACTUS_NAVIGATION.move(w.document,39);assert.equal(w.CACTUS_NAVIGATION.stats().builds,builds,'image changes preserve navigation cache');
+ navgrid.lastChild.disabled=true;w.CACTUS_NAVIGATION.move(w.document,39);assert.equal(w.CACTUS_NAVIGATION.stats().builds,builds+1,'disabled button invalidates cache');d.window.close();
+ d=dom();w=d.window;w.document.body.innerHTML='<div id="browse-shelves"></div><button id="browse-more"></button>';let currentArt='https://img.example/first.jpg',attached=0;
+ let shelfItems=[{id:'xuper-A',title:'Example',posterUrl:currentArt}];
+ w.CACTUS_API={safeImage:u=>!!u,poster:()=>currentArt,categoryCatalog:(s,r,c,done)=>done(null,{items:shelfItems})};w.CACTUS_IMAGES={attach:(im,src)=>{attached++;im._cactusTask={state:'done'};},release(){},scan(){}};w.CACTUS_NAVIGATION={focus:n=>n.focus()};
+ evaluate(w,read('browse-shelves.js'));w.CACTUS_BROWSE.open('movie','1',[{id:'1',name:'All'}],'1',false);
+ let card=w.document.querySelector('.media-card');card.focus();currentArt='https://img.example/new.jpg';let change=w.document.createEvent('Event');change.initEvent('cactusartworkchange',false,false);w.document.dispatchEvent(change);
+ assert.strictEqual(w.document.querySelector('.media-card'),card,'artwork refresh preserves carousel nodes');assert.strictEqual(w.document.activeElement,card,'artwork refresh preserves focus');assert.equal(attached,2);w.document.dispatchEvent(change);assert.equal(attached,2,'unchanged artwork causes no reattach');d.window.close();
+ 
  d=dom();w=d.window;let raw={contentId:'ABC',name:'Example',type:'1',description:'Example',poster:'https://img.example/archive.jpg',wide:'https://img.example/archive-wide.jpg'};
  let boot={categories:{series:{defaultColumnId:'1'}},records:{'xuper-ABC':raw},sections:{},totals:{}};
  w.XMLHttpRequest=function(){this.open=()=>{};this.send=()=>{this.responseText=JSON.stringify(Object.assign({format:1},boot));this.onload();};};w.CACTUS_RUNTIME={direct:true};w.XuperConfig={};w.fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(boot)});
