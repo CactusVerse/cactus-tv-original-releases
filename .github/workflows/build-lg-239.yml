@@ -1,0 +1,46 @@
+name: Build LG 2.0.39 Desierto demand fusion
+on:
+  push:
+    branches: ["fix/lg-239-demand-desierto"]
+    paths: [".github/workflows/build-lg-239.yml", "scripts/lg239-changes.b64", "scripts/build-lg-239.py", "scripts/test-lg-239.cjs"]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned latest LG 238
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 43082933638 --repo "$GITHUB_REPOSITORY" --name CactusTV-LG-2.0.38-Busqueda-Fluida --dir base
+      - name: Build and check all JS and preserved feature modules
+        run: python3 scripts/build-lg-239.py 2>&1 | tee build239.log
+      - name: Install DOM test environment
+        run: npm install --no-save --ignore-scripts jsdom@26
+      - name: Test rich search, native artwork flow, worker boot and focus
+        run: node scripts/test-lg-239.cjs 2>&1 | tee -a build239.log
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: CactusTV-LG-2.0.39-Fluidez-Desierto
+          path: dist/*.ipk
+          retention-days: 30
+      - name: Save result
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          python3 - <<'PY'
+          import os,json,pathlib
+          p=pathlib.Path('build239.log')
+          pathlib.Path('build-result-239.json').write_text(json.dumps({'status':os.environ['RESULT'],'run_id':os.environ['GITHUB_RUN_ID'],'artifact_id':os.environ.get('ARTIFACT_ID'),'artifact_url':os.environ.get('ARTIFACT_URL'),'log':p.read_text()[-18000:] if p.exists() else ''},indent=2))
+          PY
+          git config user.name "Cactus LG build"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-result-239.json
+          git commit -m "Record LG 239 build and feature-preservation results"
+          git push origin HEAD:fix/lg-239-demand-desierto
