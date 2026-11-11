@@ -52,7 +52,10 @@ def patch(name,s):
  elif name=='browse-shelves.js':
   s=one(s,"while(cards.firstChild)cards.removeChild(cards.firstChild);","if(window.CACTUS_IMAGES)window.CACTUS_IMAGES.release(cards);while(cards.firstChild)cards.removeChild(cards.firstChild);")
   old="function refreshVisibleArtwork(){if(current&&enabled){current.rows.forEach(function(entry){if(entry.data){entry.signature='';fill(current,entry,entry.data);}});}}"
-  new="""function refreshVisibleArtwork(){if(!current||!enabled)return;current.rows.forEach(function(entry){if(!entry.data)return;var cards=entry.row.querySelectorAll('.media-card');for(var i=0;i<cards.length;i++){var card=cards[i],id=card.dataset.id,item=null;for(var j=0;j<entry.data.items.length;j++)if(entry.data.items[j].id===id){item=entry.data.items[j];break;}if(!item)continue;var holder=card.querySelector('.poster'),img=holder&&holder.querySelector('img'),src=api.poster(item);if(!holder||!api.safeImage(src))continue;if(!img){img=document.createElement('img');holder.appendChild(img);}if(!img._cactusTask||img.getAttribute('data-art')!==src){img.setAttribute('data-art',src);window.CACTUS_IMAGES.attach(img,src,item.posterAlternates||[]);}}});}"""
+  new="""function refreshVisibleArtwork(){if(!current||!enabled||(window.CACTUS_LIGHT&&window.CACTUS_LIGHT.titles()))return;current.rows.forEach(function(entry){if(!entry.data)return;var cards=entry.row.querySelectorAll('.media-card');for(var i=0;i<cards.length;i++){var card=cards[i],id=card.dataset.id,item=null;for(var j=0;j<entry.data.items.length;j++)if(entry.data.items[j].id===id){item=entry.data.items[j];break;}if(!item)continue;var holder=card.querySelector('.poster'),img=holder&&holder.querySelector('img'),src=api.poster(item);if(!holder||!api.safeImage(src))continue;if(!img){img=document.createElement('img');holder.appendChild(img);}if(!img._cactusTask||img.getAttribute('data-art')!==src){img.setAttribute('data-art',src);window.CACTUS_IMAGES.attach(img,src,item.posterAlternates||[]);}}});}"""
+  if old not in s:
+   legacy="document.addEventListener('cactusartworkchange',function(){if(current&&enabled){current.rows.forEach(function(entry){if(entry.data){entry.signature='';fill(current,entry,entry.data);}});}});"
+   s=one(s,legacy,old+"\n document.addEventListener('cactusartworkchange',refreshVisibleArtwork);\n document.addEventListener('cactussettingschange',refreshVisibleArtwork);")
   s=one(s,old,new)
   # Settings can change titles-only mode, and must rebuild the view.
   s=one(s,"document.addEventListener('cactussettingschange',refreshVisibleArtwork);","document.addEventListener('cactussettingschange',function(){if(current&&enabled)current.rows.forEach(function(e){if(e.data){e.signature='';fill(current,e,e.data);}});});")
@@ -61,7 +64,9 @@ def patch(name,s):
   s=one(s,"if(!enabled||!current||document.hidden)return;","if(!enabled||!current)return;")
  elif name=='navigation.js':
   # Image onload/fallback changes don't change available focus targets.
-  s=one(s,"new MutationObserver(function(){revision++;})","new MutationObserver(function(changes){for(var i=0;i<changes.length;i++){var c=changes[i],n=c.target;if(c.type==='attributes'&&(n.tagName==='IMG'||n.classList&&n.classList.contains('cactus-art-missing')))continue;if(c.type==='childList'&&n.classList&&n.classList.contains('poster'))continue;revision++;break;}})")
+  s=one(s,"new MutationObserver(function(){revision++;})","new MutationObserver(invalidate)")
+  s=one(s," function ancestor(n,attribute)"," function invalidate(changes){for(var i=0;i<changes.length;i++){var c=changes[i],n=c.target;if(c.type==='attributes'&&(n.tagName==='IMG'||n.classList&&n.classList.contains('cactus-art-missing')))continue;if(c.type==='childList'&&n.classList&&n.classList.contains('poster'))continue;revision++;break;}}\n function ancestor(n,attribute)")
+  s=one(s,"if(observer&&observer.takeRecords().length)revision++;","if(observer)invalidate(observer.takeRecords());")
  return s
 expected={'Standard':'cd1385f779b107e4b75e1afd87d472e51ffee4577a5843208a583853e15537ff','webOS6':'3717303c7d4b40cddbc37c199b0cb3b529b3f785f9ca33539004a75e6ff9f39d'}
 for kind in ('Standard','webOS6'):
