@@ -1,0 +1,46 @@
+name: Build LG 2.0.38 search and navigation fix
+on:
+  push:
+    branches: ["fix/lg-238-search-performance"]
+    paths: [".github/workflows/build-lg-238.yml", "scripts/lg238-ui.json", "scripts/build-lg-238.py"]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned LG 237
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 43068377577 --repo "$GITHUB_REPOSITORY" --name CactusTV-LG-2.0.37-Navegacion-Busqueda-BETA --dir base
+      - name: Build and verify both packages
+        run: python3 scripts/build-lg-238.py 2>&1 | tee build238.log
+      - name: Install DOM fixtures
+        run: npm install --no-save --ignore-scripts jsdom@26
+      - name: Regression tests on both packaged variants
+        run: node scripts/test-lg-238.cjs 2>&1 | tee -a build238.log
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: CactusTV-LG-2.0.38-Busqueda-Fluida
+          path: dist/*.ipk
+          retention-days: 30
+      - name: Save build result for review
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          python3 - <<'PY'
+          import os,json,pathlib
+          log=pathlib.Path('build238.log')
+          pathlib.Path('build-result-238.json').write_text(json.dumps({'status':os.environ['RESULT'],'run_id':os.environ['GITHUB_RUN_ID'],'artifact_id':os.environ.get('ARTIFACT_ID'),'artifact_url':os.environ.get('ARTIFACT_URL'),'log':log.read_text()[-16000:] if log.exists() else ''},indent=2))
+          PY
+          git config user.name "Cactus LG build"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-result-238.json
+          git commit -m "Record LG 238 build and regression results"
+          git push origin HEAD:fix/lg-238-search-performance
