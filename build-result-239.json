@@ -1,0 +1,7 @@
+{
+  "status": "success",
+  "run_id": "43088174889",
+  "artifact_id": "13886209360",
+  "artifact_url": "https://github.com/CactusVerse/cactus-tv-original-releases/actions/runs/43088174889/artifacts/13886209360",
+  "log": "BUILT Standard 13107632 26c527e0fb13de36a15f008c438490fd1d14885053c98675348238116bf9ff57 playback/live/parental/favorites preserved byte-for-byte\nBUILT webOS6 13108174 ad824675414e3b15099f040e423cffd5fb24c30b3876dc5b67eb8f969b011cc8 playback/live/parental/favorites preserved byte-for-byte\nPASS Standard rich provider search schema, no global scan, full-size direct art, adult filtering, search returns immediately; normalized and detail artwork; bounded visible images; no scroll cancellation; cached geometry and focus; one repair request; stale search cancellation\nPASS Standard worker uses small seed only, retains declared totals, no automatic global sync\nPASS webOS6 rich provider search schema, no global scan, full-size direct art, adult filtering, search returns immediately; normalized and detail artwork; bounded visible images; no scroll cancellation; cached geometry and focus; one repair request; stale search cancellation\nPASS webOS6 worker uses small seed only, retains declared totals, no automatic global sync\n"
+}
