@@ -24,7 +24,7 @@ jobs:
             files=[m for m in t if m.isfile()]
             print('FILES',[(m.name,m.size) for m in files if m.name.endswith(('.js','.html','.css','.json')) and '/node_modules/' not in m.name])
             for m in files:
-              if m.name.rsplit('/',1)[-1] in ['search-view.js','poster-loader.js','image-loader.js','navigation.js','focus.js','index.html']:
+              if m.name.rsplit('/',1)[-1] in ['poster-images.js','cactus-search-artwork.js','main.js','browse-shelves.js','direct-api.js']:
                 s=t.extractfile(m).read().decode('utf-8')
                 print('\nSOURCE_BEGIN',m.name,'\n'+s+'\nSOURCE_END')
           PY
