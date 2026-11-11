@@ -1,0 +1,77 @@
+name: Publicar LG 2.0.36 - carátulas en búsqueda y episodios
+on:
+  push:
+    paths:
+      - ".github/workflows/publicar-lg-236.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtener las dos variantes oficiales 2.0.35
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download lg-2.0.35-oficial --repo "$GITHUB_REPOSITORY" --pattern '*2.0.35_Oficial.ipk'
+          echo '75846d7aecfed5675f56afc872d8720d766e88d1d4f9b0926a14209c96157c94  CactusTV_LG_Standard_2.0.35_Oficial.ipk' | sha256sum -c -
+          echo '14f1f6f2192f1566adb43e089b30e57cebf16f8507d24e48b61771a3b62653a6  CactusTV_LG_webOS6_2.0.35_Oficial.ipk' | sha256sum -c -
+      - name: Construir 2.0.36 conservando todos los módulos no afectados
+        run: |
+          python3 scripts/build-lg-236.py CactusTV_LG_Standard_2.0.35_Oficial.ipk CactusTV_LG_Standard_2.0.36_Caratulas_Actualizacion.ipk Standard
+          python3 scripts/build-lg-236.py CactusTV_LG_webOS6_2.0.35_Oficial.ipk CactusTV_LG_webOS6_2.0.36_Caratulas_Actualizacion.ipk webOS6
+          dpkg-deb --info CactusTV_LG_Standard_2.0.36_Caratulas_Actualizacion.ipk
+          dpkg-deb --info CactusTV_LG_webOS6_2.0.36_Caratulas_Actualizacion.ipk
+      - name: Comprobar JS, version, carátulas y archivos no modificados
+        run: |
+          python3 - <<'PY'
+          import io,tarfile,pathlib,hashlib,json,subprocess
+          pairs=[
+            ('CactusTV_LG_Standard_2.0.35_Oficial.ipk','CactusTV_LG_Standard_2.0.36_Caratulas_Actualizacion.ipk','be9e881d6fca4c51841577a9e6c8589e233f9e2a8573821dca46954993430beb'),
+            ('CactusTV_LG_webOS6_2.0.35_Oficial.ipk','CactusTV_LG_webOS6_2.0.36_Caratulas_Actualizacion.ipk','a2c19cb0f286f430dc4382e699aae0c50ffcbe376e07f10a149c9e17ec6cb9ab')]
+          def files(path):
+            b=pathlib.Path(path).read_bytes();assert b.startswith(b'!<arch>\n')
+            j=8;data=None
+            while j<len(b):
+              h=b[j:j+60];name=h[:16].decode().strip().rstrip('/')
+              size=int(h[48:58]);part=b[j+60:j+60+size]
+              if name=='data.tar.gz':data=part
+              j+=60+size+size%2
+            assert data
+            with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as tar:
+              return {m.name.lstrip('./'):tar.extractfile(m).read() for m in tar if m.isfile()}
+          allowed={'direct-api.js','details-view.js','appinfo.json','packageinfo.json','services.json','index.html','lg-update-check.js'}
+          for oldname,newname,expected_api in pairs:
+            old=files(oldname);new=files(newname)
+            assert old.keys()==new.keys()
+            changed={p.split('/')[-1] for p in old if old[p]!=new[p]}
+            assert changed==allowed,(newname,changed)
+            data={p.split('/')[-1]:v for p,v in new.items()}
+            assert json.loads(data['appinfo.json'])['version']=='2.0.36'
+            assert hashlib.sha256(data['direct-api.js']).hexdigest()==expected_api
+            assert b'posterAlternates' in data['direct-api.js']
+            assert b'seriesCover' in data['details-view.js']
+            for fn in ('direct-api.js','details-view.js'):
+              subprocess.run(['node','--check','-'],input=data[fn],check=True)
+            for fn in ('media-engine.js','player-chrome.js','playback-controls.js','cactus-image-loader.js','main.js','live-view.js','settings.js','poster-images.js','sports-extras.json'):
+              olddata=next((v for n,v in old.items() if n.endswith('/'+fn)),None)
+              newdata=next((v for n,v in new.items() if n.endswith('/'+fn)),None)
+              assert olddata==newdata,(fn,'unexpected change')
+            print('PASS',newname,len(new),sorted(changed))
+          PY
+          sha256sum CactusTV_LG_*_2.0.36_Caratulas_Actualizacion.ipk > SHA256SUMS-LG-236.txt
+      - name: Publicar los dos IPK verificados
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=lg-2.0.36-caratulas-actualizacion
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" CactusTV_LG_Standard_2.0.36_Caratulas_Actualizacion.ipk CactusTV_LG_webOS6_2.0.36_Caratulas_Actualizacion.ipk SHA256SUMS-LG-236.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" CactusTV_LG_Standard_2.0.36_Caratulas_Actualizacion.ipk CactusTV_LG_webOS6_2.0.36_Caratulas_Actualizacion.ipk SHA256SUMS-LG-236.txt \
+              --title "Cactus TV LG 2.0.36 - actualización de carátulas" \
+              --notes "Actualización para LG estándar y LG webOS 6.0. Prioriza las imágenes más recientes en búsquedas y categorías, conserva las antiguas como respaldo y muestra la imagen de la serie cuando el episodio no tiene miniatura propia. Construida desde los paquetes oficiales 2.0.35 con los cambios de la beta 2.0.36, verificando el hash de los módulos de carátulas y preservando reproductor, canales, PIN, Kids, favoritos y navegación. El parche no ha sido validado todavía en todos los televisores; 2.0.35 permanece disponible como respaldo." \
+              --prerelease --latest=false --repo "$GITHUB_REPOSITORY"
+          fi
