@@ -1,0 +1,7 @@
+{
+  "status": "success",
+  "run_id": "43082811900",
+  "artifact_id": "13885456246",
+  "artifact_url": "https://github.com/CactusVerse/cactus-tv-original-releases/actions/runs/43082811900/artifacts/13885456246",
+  "log": "Patched API, search rendering, focus and shelves\nPatched API, search rendering, focus and shelves\nBUILT Standard 21954272 784e428d3a8b30ad5c396dfa774c6c994f01b3c9b69b6f6c32dbf10d02d3389f preserved playback and provider modules\nBUILT webOS6 21955110 baad32660f986fa17e2ed1c628c8ef379ba96abd938c64a18959fae3a24b7a50 preserved playback and provider modules\nPASS Standard search returns immediately; normalized and detail artwork; bounded visible images; no scroll cancellation; cached geometry and focus; one repair request; stale search cancellation\nPASS webOS6 search returns immediately; normalized and detail artwork; bounded visible images; no scroll cancellation; cached geometry and focus; one repair request; stale search cancellation\n"
+}
