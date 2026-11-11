@@ -1,0 +1,30 @@
+name: Audit LG 236 navigation and search
+on:
+  push:
+    branches: ["fix/lg-237-navigation-search"]
+    paths: [".github/workflows/audit-lg-237.yml"]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect published app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download lg-2.0.36-caratulas-actualizacion --repo "$GITHUB_REPOSITORY" --pattern '*webOS6*.ipk' --dir base
+          python3 - <<'PY'
+          import tarfile,io,pathlib
+          b=next(pathlib.Path('base').glob('*.ipk')).read_bytes();pos=8;parts={}
+          while pos<len(b):
+            h=b[pos:pos+60];n=h[:16].decode().strip().rstrip('/');z=int(h[48:58]);parts[n]=b[pos+60:pos+60+z];pos+=60+z+z%2
+          with tarfile.open(fileobj=io.BytesIO(parts['data.tar.gz']),mode='r:gz') as t:
+            files=[m for m in t if m.isfile()]
+            print('FILES',[(m.name,m.size) for m in files if m.name.endswith(('.js','.html','.css','.json')) and '/node_modules/' not in m.name])
+            for m in files:
+              if m.name.rsplit('/',1)[-1] in ['search-view.js','poster-loader.js','image-loader.js','navigation.js','focus.js','index.html']:
+                s=t.extractfile(m).read().decode('utf-8')
+                print('\nSOURCE_BEGIN',m.name,'\n'+s+'\nSOURCE_END')
+          PY
