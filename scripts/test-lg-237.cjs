@@ -11,12 +11,12 @@ async function run(kind){
  evaluate(w,read('poster-images.js'));let grid=w.document.getElementById('catalog'),imgs=[];
  for(let i=0;i<10;i++){let box=w.document.createElement('span');box.className='poster';if(i===9)box.dataset.top='4000';let im=w.document.createElement('img');box.appendChild(im);grid.appendChild(box);imgs.push(im);w.CACTUS_IMAGES.attach(im,'https://img.example/a'+i+'.jpg',['https://img.example/fallback.jpg']);}
  await wait(150);assert.equal(w.CACTUS_IMAGES.status().active,4);assert(!imgs[9]._src,'offscreen deferred');
- let first=pend.shift();first.onerror();await wait(270);assert.equal(first._src,'https://img.example/fallback.jpg');
+ let first=pend.shift();first.onerror();for(let im of imgs.slice(1)){im._ok=true;}let drain=setInterval(()=>{for(let im of imgs.slice(1))if(im.onload)im.onload();},20);await wait(400);clearInterval(drain);assert.equal(first._src,'https://img.example/fallback.jpg');
  first.onerror();await wait(50);assert.equal(events,1);assert.equal(first._cactusTask.state,'failed');
  w.CACTUS_IMAGES.release(grid);assert.equal(w.CACTUS_IMAGES.status().active,0);assert.equal(w.CACTUS_IMAGES.status().queued,0);assert(imgs.every(x=>!x._cactusTask));d.window.close();
  d=dom();w=d.window;let raw={contentId:'ABC',name:'Example',type:'1',description:'Example',poster:'https://img.example/archive.jpg',wide:'https://img.example/archive-wide.jpg'};
  let boot={categories:{series:{defaultColumnId:'1'}},records:{'xuper-ABC':raw},sections:{},totals:{}};
- w.CACTUS_RUNTIME={direct:true};w.XuperConfig={};w.fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(boot)});
+ w.XMLHttpRequest=function(){this.open=()=>{};this.send=()=>{this.responseText=JSON.stringify(Object.assign({format:1},boot));this.onload();};};w.CACTUS_RUNTIME={direct:true};w.XuperConfig={};w.fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(boot)});
  w.CACTUS_BACKGROUND={enabled:()=>true,on:()=>{},call:(method,arg)=>{
   if(method==='catalog')return Promise.resolve({categories:boot.categories});
   if(method==='lookupBatch')return Promise.resolve({'xuper-ABC':{poster:'/__cactus__/image?u='+encodeURIComponent(raw.poster),wide:raw.wide}});
