@@ -1,0 +1,28 @@
+name: Inspect LG 237 source for targeted correction
+on:
+  push:
+    branches: ["fix/lg-238-search-performance"]
+    paths: [".github/workflows/inspect-lg-238.yml"]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download 43068377577 --repo "$GITHUB_REPOSITORY" --name CactusTV-LG-2.0.37-Navegacion-Busqueda-BETA --dir base
+          python3 - <<'PY'
+          import pathlib,io,tarfile,json,gzip,base64
+          b=next(pathlib.Path('base').glob('*Standard*.ipk')).read_bytes();p=8;parts={}
+          while p<len(b):
+            h=b[p:p+60];z=int(h[48:58]);parts[h[:16].decode().strip().rstrip('/')]=b[p+60:p+60+z];p+=60+z+z%2
+          names={'main.js','navigation.js','browse-shelves.js','poster-images.js','direct-api.js','index.html','poster-search.js','cactus-image-loader.js','poster-search-repair.js','search-artwork-repair.js'}
+          with tarfile.open(fileobj=io.BytesIO(parts['data.tar.gz']),mode='r:gz') as t:
+            files={m.name.rsplit('/',1)[-1]:t.extractfile(m).read().decode() for m in t if m.isfile() and '/backend/app/' in m.name and m.name.rsplit('/',1)[-1] in names}
+          print('SOURCE238='+base64.b64encode(gzip.compress(json.dumps(files).encode())).decode())
+          print('NAMES',list(files))
+          PY
