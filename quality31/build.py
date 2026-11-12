@@ -18,9 +18,9 @@ for name,data in parts:
     if payload is not None and path.endswith(('appinfo.json','packageinfo.json','package.json')):
      try:
       obj=json.loads(payload)
-      if obj.get('version')=='3.0.0':obj['version']='3.1.0';payload=(json.dumps(obj,ensure_ascii=False,indent=2)+'\n').encode()
+      if obj.get('version')=='3.0.0':obj['version']='3.1.1';payload=(json.dumps(obj,ensure_ascii=False,indent=2)+'\n').encode()
      except (ValueError,UnicodeDecodeError):pass
-    if name.startswith('control.tar') and path=='control':payload=re.sub(rb'(?m)^Version: .*',b'Version: 3.1.0',payload)
+    if name.startswith('control.tar') and path=='control':payload=re.sub(rb'(?m)^Version: .*',b'Version: 3.1.1',payload)
     if payload is not None:entry.size=len(payload)
     dst.addfile(entry,io.BytesIO(payload) if payload is not None else None)
    if name.startswith('data.tar'):
@@ -34,5 +34,5 @@ result=bytearray(b'!<arch>\n')
 for name,data in out:
  h=f'{name+"/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(data):<10}`\n'.encode();assert len(h)==60;result.extend(h);result.extend(data)
  if len(data)%2:result.extend(b'\n')
-output=Path(__file__).parent/'CactusTV_LG_Clasico_3.1.0_Calidad_webOS4_ARMv7.ipk';output.write_bytes(result)
+output=Path(__file__).parent/'CactusTV_LG_Clasico_3.1.1_Calidad_webOS4_ARMv7.ipk';output.write_bytes(result)
 print(output, len(result), hashlib.sha256(result).hexdigest())

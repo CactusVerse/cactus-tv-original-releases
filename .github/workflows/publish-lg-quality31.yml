@@ -1,7 +1,7 @@
 name: Publish LG Classic quality selector
 on:
   push:
-    branches: [classic/lg-3.1.0-quality]
+    branches: [classic/lg-3.1.1-quality]
     paths: [quality31/**, .github/workflows/publish-lg-quality31.yml]
 permissions:
   contents: write
@@ -20,15 +20,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create lg-clasico-3.1.0-calidad-beta quality31/CactusTV_LG_Clasico_3.1.0_Calidad_webOS4_ARMv7.ipk --target "$GITHUB_SHA" --title 'LG Clásico 3.1.0 — Selector de calidad (beta)' --prerelease --latest=false --notes-file quality31/NOTAS.md
+          gh release create lg-clasico-3.1.1-calidad-beta quality31/CactusTV_LG_Clasico_3.1.1_Calidad_webOS4_ARMv7.ipk --target "$GITHUB_SHA" --title 'LG Clásico 3.1.1 — Selector de calidad (beta)' --prerelease --latest=false --notes-file quality31/NOTAS.md
       - name: Record result
         if: always()
         env:
           RESULT: ${{ job.status }}
         run: |
-          python -c 'import json,os;json.dump({"status":os.environ["RESULT"],"run_id":os.environ["GITHUB_RUN_ID"]},open("quality31-result.json","w"))'
+          python -c 'import json,os;json.dump({"status":os.environ["RESULT"],"run_id":os.environ["GITHUB_RUN_ID"]},open("quality311-result.json","w"))'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add quality31-result.json
+          git add quality311-result.json
           git commit -m 'Record quality selector publication result'
           git push
