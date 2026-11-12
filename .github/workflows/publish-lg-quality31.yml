@@ -1,0 +1,34 @@
+name: Publish LG Classic quality selector
+on:
+  push:
+    branches: [classic/lg-3.1.0-quality]
+    paths: [quality31/**, .github/workflows/publish-lg-quality31.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify installer
+        run: |
+          curl --fail --location --retry 3 'https://github.com/CactusVerse/cactus-tv-original-releases/releases/download/lg-clasico-3.0.0-beta/CactusTV_LG_Clasico_3.0.0_webOS4_ARMv7.ipk' -o /tmp/cactus-classic3.ipk
+          node quality31/test-quality.cjs
+          python quality31/build.py
+          python quality31/verify.py
+      - name: Publish downloadable beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create lg-clasico-3.1.0-calidad-beta quality31/CactusTV_LG_Clasico_3.1.0_Calidad_webOS4_ARMv7.ipk --target "$GITHUB_SHA" --title 'LG Clásico 3.1.0 — Selector de calidad (beta)' --prerelease --latest=false --notes-file quality31/NOTAS.md
+      - name: Record result
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          python -c 'import json,os;json.dump({"status":os.environ["RESULT"],"run_id":os.environ["GITHUB_RUN_ID"]},open("quality31-result.json","w"))'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add quality31-result.json
+          git commit -m 'Record quality selector publication result'
+          git push
