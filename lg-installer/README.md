@@ -1,4 +1,4 @@
-# Cactus TV Installer LG — Android v0.1.3 (beta)
+# Cactus TV Installer LG — Android v0.1.4 (beta)
 
 Instalador para televisor LG webOS desde un celular Android, sin computadora. Compilación Android de prueba; la conexión SSH y selección de archivos IPK se probaron con un usuario, pero esto no garantiza compatibilidad con todos los LG.
 
@@ -6,11 +6,19 @@ Instalador para televisor LG webOS desde un celular Android, sin computadora. Co
 
 1. En el televisor LG instala/abre **Developer Mode**, activa **Dev Mode Status** y **Key Server** y mantén visible esa pantalla.
 2. Conecta celular y LG a la misma red local.
-3. Instala en Android el APK **CactusTV-LG-Installer-Android-v0.1.3-beta.apk** desde GitHub Releases.
+3. Instala en Android el APK **CactusTV-LG-Installer-Android-v0.1.4-beta.apk** desde GitHub Releases.
 4. Introduce la IP local actual que aparece en Developer Mode y la passphrase directamente en la aplicación. No compartas esa passphrase.
 5. Pulsa **Probar la conexión de red**, luego **Conectar / emparejar LG** y acepta la huella SSH solo si es tu televisor.
 6. Pulsa **Seleccionar archivo .ipk** (o **Otro explorador**), elige un IPK autorizado del almacenamiento de tu celular y espera la confirmación **IPK listo**.
-7. Pulsa **Instalar en LG** y comprueba la app instalada en el televisor.
+7. Pulsa **Instalar en LG** y comprueba la app instalada en el televisor. El botón explica lo que falta si todavía no está emparejado; el archivo IPK listo no implica que la sesión SSH esté conectada.
+
+## Cambios de la beta 0.1.4
+
+- El botón Instalar siempre responde cuando la app está libre, y explica si falta IPK, emparejamiento o una passphrase correcta.
+- Impide instalar usando la clave SSH de una IP distinta de la emparejada.
+- Reconoce `statusValue: 30` (instalación completada) además de respuestas antiguas `status: installed` o `status: success`.
+- Mejora el aviso cuando webOS no confirma la instalación; no afirma éxito antes de la confirmación.
+- Todavía necesita una prueba real en el televisor LG; una compilación correcta no garantiza instalación.
 
 ## Limitaciones y seguridad
 
