@@ -36,7 +36,9 @@ public class MainActivity extends Activity {
   private TextView status,fileName,pairingState;
   private String lastDiagnostic="Aún no se han ejecutado pruebas.";
   private Button testButton,keyButton;
-  private Button pairButton,pickButton,installButton;
+  private Button pairButton,pickButton,installButton,downloadButton,alternatePicker;
+  private Spinner variantPicker;
+  private boolean officialPackage=false;
   private Uri file;
   private String selectedName="";
   private long selectedBytes=-1L;
@@ -81,10 +83,11 @@ public class MainActivity extends Activity {
   }
   private void buildUi(){
     ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(bg);
+    scroll.setOnApplyWindowInsetsListener((view,insets)->{view.setPadding(0,insets.getSystemWindowInsetTop(),0,insets.getSystemWindowInsetBottom());return insets;});
     LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
     root.setPadding(dp(18),dp(20),dp(18),dp(28));scroll.addView(root);
     add(root,label("🌵  CACTUS TV",27,accent),0);
-    add(root,label("INSTALLER LG webOS · BETA 0.1.5 · CLAVE SSH PASO A PASO",12,muted),8);
+    add(root,label("INSTALLER LG webOS · BETA 0.2.0 · CACTUS 2.0.41",12,muted),8);
     add(root,label("Instala archivos .ipk desde tu celular Android en un LG con Developer Mode. Sin PC y sin root.",15,ink),12);
     LinearLayout step1=card(root);
     add(step1,label("01  PREPARA EL TELEVISOR",16,accent),5);
@@ -134,10 +137,15 @@ public class MainActivity extends Activity {
     forget.setOnClickListener(v->forgetHost());
     LinearLayout step3=card(root);
     add(step3,label("03  INSTALAR ARCHIVO IPK",16,accent),5);
-    add(step3,label("Selecciona un .ipk autorizado guardado en el celular. No se descargan apps ni paquetes automáticamente.",13,muted),6);
+    add(step3,label("Descarga Cactus TV 2.0.41 o selecciona tu propio IPK. Standard está probada en webOS 4.4; webOS 6 sigue pendiente de prueba física.",13,muted),6);
+    variantPicker=new Spinner(this);
+    ArrayAdapter<String> variants=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"LG Standard · Cactus 2.0.41","LG webOS 6 · Cactus 2.0.41 (beta)"});
+    variantPicker.setAdapter(variants);variantPicker.setBackgroundTintList(ColorStateList.valueOf(accent));add(step3,variantPicker,6);
+    downloadButton=button("Descargar Cactus TV 2.0.41");add(step3,downloadButton,5);
+    downloadButton.setOnClickListener(v->downloadOfficial());
     pickButton=button("Seleccionar archivo .ipk");add(step3,pickButton,5);
     pickButton.setOnClickListener(v->pickFile());
-    Button alternatePicker=button("Otro explorador (si no funciona)");
+    alternatePicker=button("Otro explorador (si no funciona)");
     add(step3,alternatePicker,5);
     alternatePicker.setOnClickListener(v->pickFileAlternative());
     fileName=label("Ningún archivo seleccionado. Tras elegir el IPK, aquí aparecerá su nombre o un error.",14,ink);
@@ -153,7 +161,7 @@ public class MainActivity extends Activity {
     updatePairingState();
   }
   private void say(String s){main.post(()->{
-    lastDiagnostic="Cactus TV Installer LG v0.1.5\n"+s;
+    lastDiagnostic="Cactus TV Installer LG v0.2.0\n"+s;
     status.setText(s);
     boolean error=s.startsWith("No se")||s.startsWith("Error")||
                   s.contains("no responde")||s.contains("inválida")||
@@ -212,6 +220,7 @@ public class MainActivity extends Activity {
     main.post(()->{
       pairButton.setText(w?"Verificando conexión...":"3 · Verificar clave y emparejar LG");
       pairButton.setEnabled(!w);keyButton.setEnabled(!w);testButton.setEnabled(!w);pickButton.setEnabled(!w);
+      downloadButton.setEnabled(!w);variantPicker.setEnabled(!w);alternatePicker.setEnabled(!w);
       hostInput.setEnabled(!w);passInput.setEnabled(!w);
       installButton.setEnabled(!w);
     });
@@ -401,9 +410,23 @@ public class MainActivity extends Activity {
     });
   }
 
+  private void downloadOfficial(){
+    if(busy)return;
+    final boolean webos6=variantPicker.getSelectedItemPosition()==1;
+    launch(()->{
+      try{
+        say("Descargando Cactus TV 2.0.41. Se verificará el archivo antes de instalar.");
+        File output=ReleaseDownload.download(getCacheDir(),webos6);
+        main.post(()->{file=Uri.fromFile(output);selectedName=output.getName();selectedBytes=output.length();officialPackage=true;
+          fileName.setText("✓ IPK listo: "+selectedName+"\nDescarga verificada. Conecta el LG y pulsa Instalar en LG.");
+          fileName.setTextColor(Color.rgb(168,224,178));});
+        say("Descarga completa y SHA-256 correcto. No se ha instalado todavía.");
+      }catch(Exception e){say("No se pudo descargar: "+e.getMessage()+". Puedes seleccionar un IPK local.");}
+    });
+  }
   private void pickFile(){
     if(busy)return;
-    file=null;
+    file=null;officialPackage=false;
     if(installButton!=null)installButton.setEnabled(false);
     fileFeedback("Abriendo el selector de archivos... Elige un paquete .ipk.",false);
     try {
@@ -418,7 +441,7 @@ public class MainActivity extends Activity {
   }
   private void pickFileAlternative(){
     if(busy)return;
-    file=null;
+    file=null;officialPackage=false;
     if(installButton!=null)installButton.setEnabled(false);
     fileFeedback("Abriendo otro explorador de archivos...",false);
     try{
@@ -507,7 +530,7 @@ public class MainActivity extends Activity {
         final String display=name;
         final long size=bytes;
         main.post(()->{
-          file=selected;selectedName=display;selectedBytes=size;
+          file=selected;officialPackage=false;selectedName=display;selectedBytes=size;
           fileName.setText("✓ IPK listo: "+display+(size>=0?" ("+String.format(Locale.ROOT,"%.1f MB",(double)size/(1024*1024))+")":"")+
             "\nPulsa Instalar en LG para continuar.");
           fileName.setTextColor(Color.rgb(168,224,178));
@@ -546,6 +569,7 @@ public class MainActivity extends Activity {
         Thread.sleep(180);
       }
       String response=output.toString("UTF-8");
+      if(!requireInstall&&!c.isClosed())throw new IOException("El LG no respondió a tiempo. Reinicia el televisor antes de reintentar.");
       if(c.isClosed()&&c.getExitStatus()!=0)
         throw new Exception("Error de comando remoto ("+c.getExitStatus()+"): "+response.substring(0,Math.min(response.length(),300)));
       String finalNormalized=response.toLowerCase(Locale.ROOT).replaceAll("\\s+","");
@@ -556,6 +580,9 @@ public class MainActivity extends Activity {
           response.substring(0,Math.min(response.length(),300)));
       return response;
     }finally{c.disconnect();}
+  }
+  private InputStream openPackage(Uri uri) throws IOException {
+    return "file".equals(uri.getScheme())?new FileInputStream(new File(uri.getPath())):getContentResolver().openInputStream(uri);
   }
   private void install(){
     if(file==null){
@@ -577,10 +604,19 @@ public class MainActivity extends Activity {
       try{
         say("Conectando a LG vía SSH...");
         s=connect(h,key,p);
+        if(officialPackage){
+          say("Cerrando Cactus TV antes de actualizar...");
+          // Only the known Cactus package is closed, never an unrelated app.
+          String running=exec(s,"/usr/bin/luna-send-pub -n 1 luna://com.webos.applicationManager/dev/running '{}'",12000,false);
+          if(running.contains("com.cocotecnico.cactustv.lgtest")){
+            exec(s,"/usr/bin/luna-send-pub -n 1 luna://com.webos.applicationManager/dev/closeByAppId '{\"id\":\"com.cocotecnico.cactustv.lgtest\",\"subscribe\":false}'",15000,false);
+            Thread.sleep(1800);
+          }
+        }
         exec(s,"/usr/bin/test -d /media/developer/temp || /bin/mkdir -p /media/developer/temp",12000,false);
         sftp=(ChannelSftp)s.openChannel("sftp");sftp.connect(13000);
         say("Enviando "+selectedName+" por SFTP...");
-        try(InputStream in=getContentResolver().openInputStream(uri)){
+        try(InputStream in=openPackage(uri)){
           if(in==null)throw new Exception("No se pudo abrir el archivo IPK.");
           final long total=selectedBytes;
           sftp.put(in,remote,new SftpProgressMonitor(){
