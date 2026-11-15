@@ -41,10 +41,11 @@ public class MainActivity extends Activity {
   private String selectedName="";
   private long selectedBytes=-1L;
   private volatile byte[] currentKey;
+  private volatile String pairedIp;
   private final Handler main=new Handler(Looper.getMainLooper());
   private final ExecutorService background=Executors.newSingleThreadExecutor();
   private SharedPreferences prefs;
-  private boolean busy=false;
+  private volatile boolean busy=false;
 
   @Override public void onCreate(Bundle saved) {
     super.onCreate(saved);
@@ -134,17 +135,21 @@ public class MainActivity extends Activity {
     fileName=label("Ningún archivo seleccionado. Tras elegir el IPK, aquí aparecerá su nombre o un error.",14,ink);
     fileName.setMinHeight(dp(68));
     add(step3,fileName,7);
-    installButton=button("Instalar en LG");installButton.setEnabled(false);
-    add(step3,installButton,3);installButton.setOnClickListener(v->install());
+    installButton=button("Instalar en LG");
+    add(step3,installButton,3);installButton.setOnClickListener(v->{
+      feedback("Instalar en LG pulsado");
+      install();
+    });
     add(root,label("Proyecto experimental independiente. LG webOS Developer Mode puede caducar. La passphrase no se guarda.",11,muted),0);
     setContentView(scroll);
   }
   private void say(String s){main.post(()->{
-    lastDiagnostic="Cactus TV Installer LG v0.1.2\n"+s;
+    lastDiagnostic="Cactus TV Installer LG v0.1.4\n"+s;
     status.setText(s);
     boolean error=s.startsWith("No se")||s.startsWith("Error")||
                   s.contains("no responde")||s.contains("inválida")||
-                  s.contains("cerrado")||s.contains("rechazada");
+                  s.contains("cerrado")||s.contains("rechazada")||
+                  s.startsWith("Instalación no confirmada");
     status.setTextColor(error?Color.rgb(255,169,151):ink);
   });}
   private void feedback(String message){
@@ -188,7 +193,7 @@ public class MainActivity extends Activity {
       pairButton.setText(w?"Conectando con LG...":"2 · Conectar / emparejar LG");
       pairButton.setEnabled(!w);testButton.setEnabled(!w);pickButton.setEnabled(!w);
       hostInput.setEnabled(!w);passInput.setEnabled(!w);
-      installButton.setEnabled(!w&&file!=null&&currentKey!=null);
+      installButton.setEnabled(!w);
     });
   }
   private void launch(Runnable task){
@@ -335,10 +340,12 @@ public class MainActivity extends Activity {
         say("Paso 3/3: autenticando SSH. Si aparece una huella, revisa y confirma.");
         s=connect(h,key,p);
         currentKey=key;
+        pairedIp=h;
         prefs.edit().putString("last_ip",h).apply();
         say("¡LG conectado correctamente! Ahora selecciona tu archivo IPK.");
       }catch(Exception e){
         currentKey=null;
+        pairedIp=null;
         String message=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
         say("No se pudo conectar con "+h+": "+message+
           "\nVerifica la IP en Developer Mode, Key Server ON y la misma red Wi-Fi.");
@@ -351,7 +358,7 @@ public class MainActivity extends Activity {
     new AlertDialog.Builder(this).setTitle("Olvidar huella SSH")
       .setMessage("¿Olvidar la identidad guardada para "+h+"? Confirma solo si cambiaron tu televisor o la clave SSH.")
       .setPositiveButton("Olvidar",(d,w)->{
-        prefs.edit().remove("pin_"+h).apply();currentKey=null;
+        prefs.edit().remove("pin_"+h).apply();currentKey=null;pairedIp=null;
         say("Huella olvidada. Vuelve a emparejar y verifica el LG.");
         working(false);
       }).setNegativeButton("Cancelar",null).show();
@@ -476,7 +483,7 @@ public class MainActivity extends Activity {
           fileName.setText("✓ IPK listo: "+display+(size>=0?" ("+String.format(Locale.ROOT,"%.1f MB",(double)size/(1024*1024))+")":"")+
             "\nPulsa Instalar en LG para continuar.");
           fileName.setTextColor(Color.rgb(168,224,178));
-          installButton.setEnabled(!busy&&currentKey!=null);
+          installButton.setEnabled(!busy);
           Toast.makeText(MainActivity.this,"IPK seleccionado",Toast.LENGTH_SHORT).show();
         });
       }catch(Exception ex){
@@ -505,24 +512,35 @@ public class MainActivity extends Activity {
         if(normalized.contains("\"returnvalue\":false")||normalized.contains("\"status\":\"failed\"")||
            normalized.contains("\"errorcode\":"))throw new Exception("webOS rechazó la operación: "+response.substring(0,Math.min(response.length(),400)));
         if(requireInstall && (normalized.contains("\"status\":\"installed\"")||
-                              normalized.contains("\"status\":\"success\"")))return response;
+                              normalized.contains("\"status\":\"success\"")||
+                              normalized.contains("\"statusvalue\":30")))return response;
         if(c.isClosed())break;
         Thread.sleep(180);
       }
       String response=output.toString("UTF-8");
       if(c.isClosed()&&c.getExitStatus()!=0)
         throw new Exception("Error de comando remoto ("+c.getExitStatus()+"): "+response.substring(0,Math.min(response.length(),300)));
-      if(requireInstall&&!(response.toLowerCase(Locale.ROOT).contains("\"status\":\"installed\"")||
-                           response.toLowerCase(Locale.ROOT).contains("\"status\": \"installed\"")))
+      String finalNormalized=response.toLowerCase(Locale.ROOT).replaceAll("\\s+","");
+      if(requireInstall&&!(finalNormalized.contains("\"status\":\"installed\"")||
+                           finalNormalized.contains("\"status\":\"success\"")||
+                           finalNormalized.contains("\"statusvalue\":30")))
         throw new Exception("No llegó confirmación de instalación; comprueba el estado en el LG. Respuesta: "+
           response.substring(0,Math.min(response.length(),300)));
       return response;
     }finally{c.disconnect();}
   }
   private void install(){
-    if(file==null||currentKey==null){say("Conecta el LG y selecciona un archivo IPK.");return;}
+    if(file==null){
+      say("Antes de instalar, selecciona un archivo .ipk válido en el paso 03.");return;
+    }
+    if(currentKey==null){
+      say("El IPK está listo, pero falta emparejar el LG. En el paso 02, verifica Key Server ON, escribe la passphrase y pulsa «Conectar / emparejar LG».");return;
+    }
     final String h,p;
-    try{h=host();p=pass();}catch(Exception e){say(e.getMessage());return;}
+    try{h=host();p=pass();}catch(Exception e){say("No se puede instalar: "+e.getMessage());return;}
+    if(!h.equals(pairedIp)){
+      say("La IP del televisor cambió desde el último emparejamiento. Vuelve a pulsar «Conectar / emparejar LG» con la IP actual.");return;
+    }
     final Uri uri=file;final byte[] key=currentKey;
     launch(()->{
       Session s=null;ChannelSftp sftp=null;
