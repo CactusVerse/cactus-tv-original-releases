@@ -33,13 +33,15 @@ public class MainActivity extends Activity {
                     ink=Color.rgb(245,229,210), muted=Color.rgb(192,165,140),
                     accent=Color.rgb(222,171,116);
   private EditText hostInput,passInput;
-  private TextView status,fileName;
+  private TextView status,fileName,pairingState;
   private String lastDiagnostic="Aún no se han ejecutado pruebas.";
-  private Button testButton;
+  private Button testButton,keyButton;
   private Button pairButton,pickButton,installButton;
   private Uri file;
   private String selectedName="";
   private long selectedBytes=-1L;
+  private volatile byte[] downloadedKey;
+  private volatile String downloadedKeyIp;
   private volatile byte[] currentKey;
   private volatile String pairedIp;
   private final Handler main=new Handler(Looper.getMainLooper());
@@ -82,13 +84,14 @@ public class MainActivity extends Activity {
     LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
     root.setPadding(dp(18),dp(20),dp(18),dp(28));scroll.addView(root);
     add(root,label("🌵  CACTUS TV",27,accent),0);
-    add(root,label("INSTALLER LG webOS · BETA 0.1.3 · SELECTOR IPK",12,muted),8);
+    add(root,label("INSTALLER LG webOS · BETA 0.1.5 · CLAVE SSH PASO A PASO",12,muted),8);
     add(root,label("Instala archivos .ipk desde tu celular Android en un LG con Developer Mode. Sin PC y sin root.",15,ink),12);
     LinearLayout step1=card(root);
     add(step1,label("01  PREPARA EL TELEVISOR",16,accent),5);
     add(step1,label("Dev Mode Status: ON  ·  Key Server: ON\nConecta LG y celular a la misma red Wi-Fi. Mantén abierta la pantalla Developer Mode.",13,ink),3);
     LinearLayout step2=card(root);
-    add(step2,label("02  CONECTAR AL LG",16,accent),5);
+    add(step2,label("02  OBTENER CLAVE SSH Y EMPAREJAR",16,accent),5);
+    add(step2,label("El televisor entrega la clave SSH mediante Key Server: ON. Primero obtén la clave, después verifica la conexión con la passphrase de seis caracteres de LG.",13,muted),5);
     hostInput=new EditText(this);
     hostInput.setSingleLine(true);hostInput.setTextColor(ink);
     hostInput.setHintTextColor(muted);hostInput.setHint("IP del LG: 192.168.x.x");
@@ -106,12 +109,17 @@ public class MainActivity extends Activity {
       feedback("Botón de diagnóstico pulsado");
       testNetwork();
     });
-    pairButton=button("2 · Conectar / emparejar LG");
+    keyButton=button("2 · Obtener clave SSH del LG");
+    add(step2,keyButton,5);
+    keyButton.setOnClickListener(v->{feedback("Solicitando clave SSH al LG");fetchDeveloperKey();});
+    pairButton=button("3 · Verificar clave y emparejar LG");
     add(step2,pairButton,5);
     pairButton.setOnClickListener(v->{
       feedback("Botón de emparejamiento pulsado");
       pair();
     });
+    pairingState=label("Clave SSH: PENDIENTE  |  Emparejamiento: PENDIENTE",13,accent);
+    add(step2,pairingState,6);
     status=label("Diagnóstico: toca Probar la conexión de red. No necesitas la passphrase para esta prueba.",15,ink);
     status.setMinHeight(dp(94));
     add(step2,status,8);
@@ -142,9 +150,10 @@ public class MainActivity extends Activity {
     });
     add(root,label("Proyecto experimental independiente. LG webOS Developer Mode puede caducar. La passphrase no se guarda.",11,muted),0);
     setContentView(scroll);
+    updatePairingState();
   }
   private void say(String s){main.post(()->{
-    lastDiagnostic="Cactus TV Installer LG v0.1.4\n"+s;
+    lastDiagnostic="Cactus TV Installer LG v0.1.5\n"+s;
     status.setText(s);
     boolean error=s.startsWith("No se")||s.startsWith("Error")||
                   s.contains("no responde")||s.contains("inválida")||
@@ -187,11 +196,22 @@ public class MainActivity extends Activity {
       say(report);
     });
   }
+  private void updatePairingState(){
+    main.post(()->{
+      if(pairingState==null)return;
+      String ip=hostInput.getText().toString().trim();
+      boolean hasKey=downloadedKey!=null&&ip.equals(downloadedKeyIp);
+      boolean isPaired=currentKey!=null&&ip.equals(pairedIp);
+      pairingState.setText("Clave SSH: "+(hasKey?"OBTENIDA":"PENDIENTE")+
+          "  |  Emparejamiento: "+(isPaired?"VALIDADO":"PENDIENTE"));
+      pairingState.setTextColor(isPaired?Color.rgb(168,224,178):accent);
+    });
+  }
   private void working(boolean w){
     busy=w;
     main.post(()->{
-      pairButton.setText(w?"Conectando con LG...":"2 · Conectar / emparejar LG");
-      pairButton.setEnabled(!w);testButton.setEnabled(!w);pickButton.setEnabled(!w);
+      pairButton.setText(w?"Verificando conexión...":"3 · Verificar clave y emparejar LG");
+      pairButton.setEnabled(!w);keyButton.setEnabled(!w);testButton.setEnabled(!w);pickButton.setEnabled(!w);
       hostInput.setEnabled(!w);passInput.setEnabled(!w);
       installButton.setEnabled(!w);
     });
@@ -318,39 +338,47 @@ public class MainActivity extends Activity {
     if(s.length()!=6)throw new Exception("Introduce los seis caracteres de la Passphrase.");
     return s;
   }
+  private void fetchDeveloperKey(){
+    final String h;
+    try{h=host();}catch(Exception e){say("IP inválida: "+e.getMessage());return;}
+    launch(()->{
+      downloadedKey=null;downloadedKeyIp=null;currentKey=null;pairedIp=null;updatePairingState();
+      try{
+        say("Paso 2/3: solicitando clave SSH al Key Server del LG...");
+        byte[] key=keyFromTv(h);
+        downloadedKey=key;downloadedKeyIp=h;
+        say("✓ Clave SSH obtenida del LG. Escribe la passphrase de seis caracteres que aparece en Developer Mode y pulsa el botón 3 para emparejar.");
+      }catch(Exception e){
+        String why=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
+        say("No se pudo obtener la clave SSH: "+why+"\\nActiva Key Server en el LG, verifica la IP y la misma red Wi-Fi.");
+      }finally{updatePairingState();}
+    });
+  }
   private void pair(){
     final String h,p;
-    try{h=host();p=pass();}catch(Exception e){
-      say("No se puede iniciar el emparejamiento: "+e.getMessage());
-      return;
+    try{h=host();p=pass();}catch(Exception e){say("No se puede emparejar: "+e.getMessage());return;}
+    if(downloadedKey==null){
+      say("Primero pulsa «2 · Obtener clave SSH del LG». La clave la proporciona el televisor, no se genera en el celular.");return;
     }
-    say("Botón responde correctamente. Probando conexión a "+h+"...");
+    if(!h.equals(downloadedKeyIp)){
+      say("Cambió la IP del LG. Pulsa «2 · Obtener clave SSH del LG» para la IP actual.");return;
+    }
+    final byte[] key=downloadedKey;
     launch(()->{
-      Session s=null;
-      try {
-        say("Paso 1/3: verificando puertos del LG ("+h+")...");
-        boolean server=tcpReachable(h,9991,3500);
-        boolean sshPort=tcpReachable(h,9922,3500);
-        if(!server||!sshPort)
-          throw new IOException("Key Server 9991: "+(server?"OK":"SIN RESPUESTA")+
-              "; SSH 9922: "+(sshPort?"OK":"SIN RESPUESTA")+
-              ". Revisa IP actual, modo desarrollador y misma red.");
-        say("Paso 2/3: descargando clave SSH de LG...");
-        byte[] key=keyFromTv(h);
-        say("Paso 3/3: autenticando SSH. Si aparece una huella, revisa y confirma.");
-        s=connect(h,key,p);
-        currentKey=key;
-        pairedIp=h;
+      Session ssh=null;currentKey=null;pairedIp=null;updatePairingState();
+      try{
+        say("Paso 3/3: comprobando puerto SSH 9922...");
+        if(!tcpReachable(h,9922,3500))
+          throw new IOException("Puerto SSH 9922 no accesible. Comprueba Developer Mode, Wi-Fi e IP actual.");
+        say("Validando la clave SSH y passphrase. Si aparece la huella del LG, verifícala.");
+        ssh=connect(h,key,p);
+        currentKey=key;pairedIp=h;
         prefs.edit().putString("last_ip",h).apply();
-        say("¡LG conectado correctamente! Ahora selecciona tu archivo IPK.");
+        say("✓ Clave SSH VALIDADA y LG emparejado. Selecciona el IPK y pulsa Instalar en LG.");
       }catch(Exception e){
-        currentKey=null;
-        pairedIp=null;
-        String message=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
-        say("No se pudo conectar con "+h+": "+message+
-          "\nVerifica la IP en Developer Mode, Key Server ON y la misma red Wi-Fi.");
-      }
-      finally{if(s!=null)s.disconnect();}
+        String why=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
+        say("No se pudo verificar SSH: "+why+"\\nRevisa la passphrase de seis caracteres respetando mayúsculas. Puedes reintentar sin volver a obtener la clave.");
+      }finally{if(ssh!=null)ssh.disconnect();updatePairingState();}
     });
   }
   private void forgetHost(){
@@ -358,9 +386,9 @@ public class MainActivity extends Activity {
     new AlertDialog.Builder(this).setTitle("Olvidar huella SSH")
       .setMessage("¿Olvidar la identidad guardada para "+h+"? Confirma solo si cambiaron tu televisor o la clave SSH.")
       .setPositiveButton("Olvidar",(d,w)->{
-        prefs.edit().remove("pin_"+h).apply();currentKey=null;pairedIp=null;
-        say("Huella olvidada. Vuelve a emparejar y verifica el LG.");
-        working(false);
+        prefs.edit().remove("pin_"+h).apply();downloadedKey=null;downloadedKeyIp=null;currentKey=null;pairedIp=null;
+        say("Huella olvidada. Vuelve a obtener la clave y emparejar.");
+        updatePairingState();working(false);
       }).setNegativeButton("Cancelar",null).show();
   }
   // Selector compatible con proveedores DocumentsUI, Descargas, Drive y
@@ -533,13 +561,13 @@ public class MainActivity extends Activity {
     if(file==null){
       say("Antes de instalar, selecciona un archivo .ipk válido en el paso 03.");return;
     }
-    if(currentKey==null){
-      say("El IPK está listo, pero falta emparejar el LG. En el paso 02, verifica Key Server ON, escribe la passphrase y pulsa «Conectar / emparejar LG».");return;
-    }
     final String h,p;
     try{h=host();p=pass();}catch(Exception e){say("No se puede instalar: "+e.getMessage());return;}
-    if(!h.equals(pairedIp)){
-      say("La IP del televisor cambió desde el último emparejamiento. Vuelve a pulsar «Conectar / emparejar LG» con la IP actual.");return;
+    if(downloadedKey==null||!h.equals(downloadedKeyIp)){
+      say("IPK listo. Falta el paso 2: Obtener clave SSH del LG. Activa Key Server: ON.");return;
+    }
+    if(currentKey==null||!h.equals(pairedIp)){
+      say("IPK y clave listos. Falta el paso 3: Verificar clave y emparejar LG con la passphrase del televisor.");return;
     }
     final Uri uri=file;final byte[] key=currentKey;
     launch(()->{
@@ -582,5 +610,5 @@ public class MainActivity extends Activity {
       }
     });
   }
-  @Override public void onDestroy(){background.shutdownNow();currentKey=null;super.onDestroy();}
+  @Override public void onDestroy(){background.shutdownNow();downloadedKey=null;currentKey=null;super.onDestroy();}
 }
