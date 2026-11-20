@@ -1,0 +1,27 @@
+name: Build and verify LG 2.0.37 beta
+on:
+  push:
+    branches: ["fix/lg-237-navigation-search"]
+    paths: [".github/workflows/build-lg-237.yml", "scripts/build-lg-237.py", "scripts/test-lg-237.cjs", "scripts/search-artwork-repair-237.js"]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned LG 2.0.36
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download lg-2.0.36-caratulas-actualizacion --repo "$GITHUB_REPOSITORY" --pattern '*.ipk' --dir base
+      - name: Build both LG variants and verify archive integrity
+        run: python3 scripts/build-lg-237.py
+      - name: Install browser DOM test environment
+        run: npm install --no-save --ignore-scripts jsdom@26
+      - name: Test image queue and search recovery
+        run: node scripts/test-lg-237.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CactusTV-LG-2.0.37-Navegacion-Busqueda-BETA
+          path: dist/*.ipk
+          retention-days: 30
